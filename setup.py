@@ -54,9 +54,38 @@ def run():
     init_workspace()
     if not CONFIG_PATH.exists():
         sys.exit("[Error] config.json missing.")
-    cfg = CONFIG_PATH.read_text(encoding="utf-8").strip()
-    if not cfg:
+
+    cfg = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+    providers = cfg.get("providers", {})
+
+    needs_setup = any(
+        "YOUR_" in providers.get(p, {}).get("api_key", "")
+        for p in ["nvidia", "openrouter", "cohere"]
+    )
+
+    if needs_setup:
+        print("\\n[!] First run detected. Please configure your API keys.")
+        print("(Leave empty to skip a provider)\\n")
+        for p in ["nvidia", "openrouter", "cohere"]:
+            current_key = providers[p].get("api_key", "")
+            if "YOUR_" in current_key:
+                new_key = input(f"Enter {p.upper()} API Key: ").strip()
+                if new_key:
+                    providers[p]["api_key"] = new_key
+
+        configured = [p for p in ["nvidia", "openrouter", "cohere"] if "YOUR_" not in providers[p].get("api_key", "")]
+        if configured:
+            cfg["default_provider"] = configured[0]
+        else:
+            print("\\n[!] No API keys provided. Using default config.")
+
+        CONFIG_PATH.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+        print("[✓] Configuration saved to ~/.synapse/config.json\\n")
+
+    cfg_text = CONFIG_PATH.read_text(encoding="utf-8").strip()
+    if not cfg_text:
         sys.exit("[Error] config.json is empty.")
+
     os.chdir(WORKSPACE_DIR)
     from synapse.main import TerminalChat
     TerminalChat(base_dir=WORKSPACE_DIR).run()
@@ -66,7 +95,7 @@ if __name__ == "__main__":
 '''
 
 with open(os.path.join(PKG_DIR, "cli.py"), "w", encoding="utf-8") as f:
-    f.write(CLI_CODE.strip() + "\\n")
+    f.write(CLI_CODE.strip() + "\n")
 
 MAIN_CODE = '''
 import json
@@ -79,7 +108,6 @@ import urllib.error
 from pathlib import Path
 from datetime import datetime
 
-# Enable ANSI escape sequences on Windows 10+
 os.system('')
 
 if sys.stdout.encoding != 'utf-8':
@@ -107,20 +135,15 @@ class TerminalChat:
         self.platform_name = platform.system().lower()
         self.is_termux = "TERMUX_VERSION" in os.environ
         self.max_active_history = max_active_history
-        
-        # Initialize provider attributes to prevent AttributeError
         self.model = ""
         self.api_key = ""
         self.api_url = ""
         self.provider_type = "openai"
         self.headers = {}
-        
         self.config_data = self._load_config()
         self.current_provider = self.config_data.get("default_provider", "nvidia")
-        
         if not self._apply_provider_config(self.current_provider):
-            sys.exit(f"[Error] Failed to load provider '{self.current_provider}'. Please update config.json with a valid API key.")
-            
+            sys.exit(f"[Error] Failed to load provider '{self.current_provider}'. Update config.json.")
         self.memories = self._load_memories()
         self.history_data = self._load_history()
         self.chat_counter = self.history_data.get("chat_counter", 0)
@@ -392,7 +415,7 @@ if __name__ == "__main__":
 '''
 
 with open(os.path.join(PKG_DIR, "main.py"), "w", encoding="utf-8") as f:
-    f.write(MAIN_CODE.strip() + "\\n")
+    f.write(MAIN_CODE.strip() + "\n")
 
 setup(
     name="synapse-ai-cli",
