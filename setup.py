@@ -66,7 +66,7 @@ if __name__ == "__main__":
 '''
 
 with open(os.path.join(PKG_DIR, "cli.py"), "w", encoding="utf-8") as f:
-    f.write(CLI_CODE.strip() + "\n")
+    f.write(CLI_CODE.strip() + "\\n")
 
 MAIN_CODE = '''
 import json
@@ -78,6 +78,9 @@ import urllib.request
 import urllib.error
 from pathlib import Path
 from datetime import datetime
+
+# Enable ANSI escape sequences on Windows 10+
+os.system('')
 
 if sys.stdout.encoding != 'utf-8':
     try:
@@ -104,9 +107,20 @@ class TerminalChat:
         self.platform_name = platform.system().lower()
         self.is_termux = "TERMUX_VERSION" in os.environ
         self.max_active_history = max_active_history
+        
+        # Initialize provider attributes to prevent AttributeError
+        self.model = ""
+        self.api_key = ""
+        self.api_url = ""
+        self.provider_type = "openai"
+        self.headers = {}
+        
         self.config_data = self._load_config()
         self.current_provider = self.config_data.get("default_provider", "nvidia")
-        self._apply_provider_config(self.current_provider)
+        
+        if not self._apply_provider_config(self.current_provider):
+            sys.exit(f"[Error] Failed to load provider '{self.current_provider}'. Please update config.json with a valid API key.")
+            
         self.memories = self._load_memories()
         self.history_data = self._load_history()
         self.chat_counter = self.history_data.get("chat_counter", 0)
@@ -139,11 +153,9 @@ class TerminalChat:
     def _apply_provider_config(self, provider_name):
         providers = self.config_data.get("providers", {})
         if provider_name not in providers:
-            print(f"[Error] Provider '{provider_name}' not found.")
             return False
         p_cfg = providers[provider_name]
         if not p_cfg.get("api_key") or "YOUR_" in p_cfg.get("api_key", ""):
-            print(f"[Error] API key missing for '{provider_name}'. Update config.json.")
             return False
         self.current_provider = provider_name
         self.api_key = p_cfg["api_key"]
@@ -380,7 +392,7 @@ if __name__ == "__main__":
 '''
 
 with open(os.path.join(PKG_DIR, "main.py"), "w", encoding="utf-8") as f:
-    f.write(MAIN_CODE.strip() + "\n")
+    f.write(MAIN_CODE.strip() + "\\n")
 
 setup(
     name="synapse-ai-cli",
