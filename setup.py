@@ -2,14 +2,13 @@ import os
 import sys
 from setuptools import setup
 
-# Dynamically create package structure before setuptools scans it
 PKG_DIR = "synapse"
 os.makedirs(PKG_DIR, exist_ok=True)
 
 with open(os.path.join(PKG_DIR, "__init__.py"), "w", encoding="utf-8") as f:
     f.write("# Synapse AI CLI\n")
 
-CLI_CODE = """
+CLI_CODE = '''
 import os
 import sys
 import json
@@ -64,12 +63,12 @@ def run():
 
 if __name__ == "__main__":
     run()
-"""
+'''
 
 with open(os.path.join(PKG_DIR, "cli.py"), "w", encoding="utf-8") as f:
     f.write(CLI_CODE.strip() + "\n")
 
-MAIN_CODE = r"""
+MAIN_CODE = '''
 import json
 import sys
 import os
@@ -87,14 +86,14 @@ if sys.stdout.encoding != 'utf-8':
     except AttributeError:
         pass
 
-BANNER = \"\"\"
-\033[1;36m███████╗██╗   ██╗███╗   ██╗ █████╗ ██████╗ ███████╗███████╗
+BANNER = """
+\\033[1;36m███████╗██╗   ██╗███╗   ██╗ █████╗ ██████╗ ███████╗███████╗
 ██╔════╝╚██╗ ██╔╝████╗  ██║██╔══██╗██╔══██╗██╔════╝██╔════╝
 ███████╗ ╚████╔╝ ██╔██╗ ██║███████║██████╔╝███████╗█████╗  
 ╚════██║  ╚██╔╝  ██║╚██╗██║██╔══██║██╔═══╝ ╚════██║██╔══╝  
 ███████║   ██║   ██║ ╚████║██║  ██║██║     ███████║███████║
-╚══════╝   ╚═╝   ╚═╝  ╚═══╝╚═╝  ╚═╝╚═╝     ╚══════╝╚══════╝\033[0m
-\"\"\"
+╚══════╝   ╚═╝   ╚═╝  ╚═══╝╚═╝  ╚═╝╚═╝     ╚══════╝╚══════╝\\033[0m
+"""
 
 class TerminalChat:
     def __init__(self, base_dir=None, max_active_history=12):
@@ -187,10 +186,10 @@ class TerminalChat:
         self.history_path.write_text(json.dumps(self.history_data, indent=2, ensure_ascii=False), encoding="utf-8")
 
     def _build_system_prompt(self):
-        base = f"DIRECT MODE: Respond immediately. No greetings, filler, apologies, or meta-commentary. Provide only the exact answer or code requested.\nCURRENT DATE & TIME: {self._get_time()}"
+        base = f"DIRECT MODE: Respond immediately. No greetings, filler, apologies, or meta-commentary. Provide only the exact answer or code requested.\\nCURRENT DATE & TIME: {self._get_time()}"
         if self.memories:
-            base += f"\nMEMORIES (ALWAYS CONSIDER):\n- " + "\n- ".join(self.memories)
-        base += "\nRULES:\n1. Save facts with <{mem}>fact<{mem}>.\n2. Use markdown code blocks.\n3. Keep responses concise.\n4. Output <{time}> for current time."
+            base += f"\\nMEMORIES (ALWAYS CONSIDER):\\n- " + "\\n- ".join(self.memories)
+        base += "\\nRULES:\\n1. Save facts with <{mem}>fact<{mem}>.\\n2. Use markdown code blocks.\\n3. Keep responses concise.\\n4. Output <{time}> for current time."
         return base
 
     def _update_system_context(self):
@@ -199,7 +198,7 @@ class TerminalChat:
     def _build_initial_context(self):
         ctx = [{"role": "system", "content": self._build_system_prompt()}]
         if self.history_data.get("summary"):
-            ctx.append({"role": "system", "content": f"PREVIOUS SESSION SUMMARY:\n{self.history_data['summary']}"})
+            ctx.append({"role": "system", "content": f"PREVIOUS SESSION SUMMARY:\\n{self.history_data['summary']}"})
         for msg in self.history_data.get("recent", [])[-self.max_active_history:]:
             if isinstance(msg, dict):
                 ctx.append({"role": msg.get("role", "user"), "content": msg.get("content", "")})
@@ -213,14 +212,14 @@ class TerminalChat:
             self.messages.pop(1)
 
     def _clear_screen(self):
-        sys.stdout.write("\033[H\033[J")
+        sys.stdout.write("\\033[H\\033[J")
         sys.stdout.flush()
 
     def _format_code_blocks(self, text):
         def repl(m):
             lang = m.group(1).strip().upper() or "CODE"
-            return f"\n\033[1;37m╔═══ {lang} ═══╗\033[0m\n{m.group(2)}\n\033[1;37m╚══════════════╝\033[0m\n"
-        return re.sub(r'```(\w*)\n(.*?)```', repl, text, flags=re.DOTALL).replace('```', '\n\033[1;37m[ CODE ]\033[0m\n')
+            return f"\\n\\033[1;37m╔═══ {lang} ═══╗\\033[0m\\n{m.group(2)}\\n\\033[1;37m╚══════════════╝\\033[0m\\n"
+        return re.sub(r'```(\\w*)\\n(.*?)```', repl, text, flags=re.DOTALL).replace('```', '\\n\\033[1;37m[ CODE ]\\033[0m\\n')
 
     def _stream_openai(self, prompt):
         self.ctx_sys = self._estimate_tokens(self.messages[0].get("content", ""))
@@ -302,15 +301,15 @@ class TerminalChat:
         self._clear_screen()
         print(BANNER)
         pfx = "" if self.tokens_exact else "~"
-        print(f"\033[1;37m{'='*62}\033[0m")
-        print(f"\033[36m[Context] Sys: {pfx}{self.ctx_sys} | Hist: {pfx}{self.ctx_hist} | In: {pfx}{self.ctx_in} | Out: {pfx}{self.ctx_out}\033[0m")
-        print(f"\033[33m[Session] Total In: {pfx}{self.sess_in} | Total Out: {pfx}{self.sess_out}\033[0m")
-        print(f"\033[1;37m{'='*62}\033[0m")
+        print(f"\\033[1;37m{'='*62}\\033[0m")
+        print(f"\\033[36m[Context] Sys: {pfx}{self.ctx_sys} | Hist: {pfx}{self.ctx_hist} | In: {pfx}{self.ctx_in} | Out: {pfx}{self.ctx_out}\\033[0m")
+        print(f"\\033[33m[Session] Total In: {pfx}{self.sess_in} | Total Out: {pfx}{self.sess_out}\\033[0m")
+        print(f"\\033[1;37m{'='*62}\\033[0m")
         print(f"You: {self.last_user}")
         if reasoning_text:
-            print(f"\n\033[90m[Thinking]\033[0m\n\033[90m{reasoning_text}\033[0m\n\033[90m{'-'*62}\033[0m")
-        print(f"\nAssistant: {self._format_code_blocks(content_text.replace('<{time}>', self._get_time()))}", end="" if not is_complete else "\n")
-        if status: print(f"\n\033[33m[{status}]\033[0m")
+            print(f"\\n\\033[90m[Thinking]\\033[0m\\n\\033[90m{reasoning_text}\\033[0m\\n\\033[90m{'-'*62}\\033[0m")
+        print(f"\\nAssistant: {self._format_code_blocks(content_text.replace('<{time}>', self._get_time()))}", end="" if not is_complete else "\\n")
+        if status: print(f"\\n\\033[33m[{status}]\\033[0m")
         if not is_complete: sys.stdout.flush()
 
     def run(self):
@@ -318,7 +317,7 @@ class TerminalChat:
         print(BANNER)
         print(f"Env: {self.platform_name}{' (Termux)' if self.is_termux else ''} | Python {platform.python_version()} | Provider: {self.current_provider.upper()} | Model: {self.model}")
         print("Commands: 'exit', 'quit', '/memory', '/clear', '/nvidia', '/cohere', '/openrouter'")
-        print(f"Memories: {len(self.memories)} | History msgs: {len(self.history_data.get('recent', []))}\n")
+        print(f"Memories: {len(self.memories)} | History msgs: {len(self.history_data.get('recent', []))}\\n")
         try:
             while True:
                 try: user_in = input("You: ").strip()
@@ -329,22 +328,22 @@ class TerminalChat:
                     print("Session saved. Ended.")
                     break
                 if user_in.lower() == "/memory":
-                    print("\n[Saved Memories]")
+                    print("\\n[Saved Memories]")
                     for i, m in enumerate(self.memories, 1) if self.memories else print("None"): print(f"{i}. {m}")
                     print(); continue
                 if user_in.lower() == "/clear":
                     self.memories, self.history_data, self.chat_counter, self.sess_in, self.sess_out = [], {"summary": "", "recent": [], "chat_counter": 0}, 0, 0, 0
                     self._save_memories(); self._save_history()
                     self.messages = [{"role": "system", "content": self._build_system_prompt()}]
-                    print("\n\033[32m[✓ All data cleared]\033[0m"); continue
+                    print("\\n\\033[32m[✓ All data cleared]\\033[0m"); continue
                 if user_in.startswith("/"):
                     prov = user_in[1:].lower()
                     if prov in self.config_data.get("providers", {}):
                         if self._apply_provider_config(prov):
                             self._update_system_context()
-                            print(f"\n\033[32m[✓ Switched to {prov.upper()} | Model: {self.model}]\033[0m")
-                        else: print(f"\n\033[31m[Error] Failed to switch.\033[0m")
-                    else: print(f"\n\033[31m[Error] Unknown provider.\033[0m")
+                            print(f"\\n\\033[32m[✓ Switched to {prov.upper()} | Model: {self.model}]\\033[0m")
+                        else: print(f"\\n\\033[31m[Error] Failed to switch.\\033[0m")
+                    else: print(f"\\n\\033[31m[Error] Unknown provider.\\033[0m")
                     continue
                 if not user_in: continue
                 self._update_system_context()
@@ -355,8 +354,8 @@ class TerminalChat:
                     elif ev == "reasoning": cur_r += data; self._render_live(cur_r, cur_c)
                     elif ev == "content": cur_c += data; self._render_live(cur_r, cur_c)
                 self.sess_in += self.ctx_in; self.sess_out += self.ctx_out
-                new_mems = re.findall(r'<\{mem\}>(.*?)<\{mem\}>', cur_c, re.DOTALL)
-                cleaned = re.sub(r'<\{mem\}>.*?<\{mem\}>', '', cur_c, flags=re.DOTALL).strip()
+                new_mems = re.findall(r'<\\{mem\\}>(.*?)<\\{mem\\}>', cur_c, re.DOTALL)
+                cleaned = re.sub(r'<\\{mem\\}>.*?<\\{mem\\}>', '', cur_c, flags=re.DOTALL).strip()
                 status = ""
                 if new_mems and not err:
                     ts = self._get_time()
@@ -374,11 +373,11 @@ class TerminalChat:
         except KeyboardInterrupt:
             self._save_history()
             self._clear_screen()
-            print("\nInterrupted. Session saved.")
+            print("\\nInterrupted. Session saved.")
 
 if __name__ == "__main__":
     TerminalChat().run()
-"""
+'''
 
 with open(os.path.join(PKG_DIR, "main.py"), "w", encoding="utf-8") as f:
     f.write(MAIN_CODE.strip() + "\n")
