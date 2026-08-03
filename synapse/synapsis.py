@@ -5,8 +5,9 @@ from synapse.core.engine import Engine
 from synapse.core.memory import MemoryManager
 from synapse.core.history import HistoryManager
 from synapse.core.workspace import Workspace
-from synapse.core.agents import AgentController, MODE_CHAT, MODE_NATIVE, MODE_CRACK
+from synapse.core.agents import AgentController, MODE_CHAT, MODE_CRACK
 from synapse.core.sessions import SessionManager
+from synapse.core.terminal import TerminalExecutor
 
 MAX_LOOPS = 20
 
@@ -20,6 +21,7 @@ class Synapsis:
         self.hist = HistoryManager()
         self.ws = Workspace()
         self.sessions = SessionManager()
+        self.terminal = TerminalExecutor()
         self.agent = AgentController(self.engine, self.ws, self.mem, self.hist)
         self.current_session_msgs = []
         self.code_context = {}
@@ -122,14 +124,14 @@ class Synapsis:
             parts.append(sys_prompt)
         parts.append(self.agent.build_prompt(self.dna, ts))
         if pinned:
-            pc = "PINNED FILES (always in context):\n"
+            pc = "PINNED FILES:\n"
             for fname in pinned:
                 content = self.ws.read(fname)
                 if content:
                     pc += "\n--- " + fname + " ---\n" + content + "\n"
             parts.append(pc)
         if code_ctx:
-            cc = "AI-GENERATED CODE FILES (current versions):\n"
+            cc = "AI-GENERATED CODE FILES:\n"
             for fname, content in code_ctx.items():
                 cc += "\n--- " + fname + " ---\n" + content + "\n"
             parts.append(cc)
@@ -149,16 +151,23 @@ class Synapsis:
         for fname, content in writes:
             code_ctx[fname] = content.strip()
 
+    def _execute_commands(self, content):
+        cmds = self.agent.extract_commands(content)
+        results = []
+        for cmd in cmds:
+            res = self.terminal.execute(cmd)
+            results.append(f"[CMD] {cmd}\n{res['output']}")
+        return results
+
     def stream_chat(self, user_input, session_id=None):
         sid = session_id or self.active_session_id
         session_msgs, code_ctx, pinned, sys_prompt = self._load_session_snapshot(sid)
-
         original_input = user_input
         current_prompt = user_input
         loop_context = []
         loop_count = 0
         partial_content = ""
-        completed = False
+        saved = False
 
         try:
             while loop_count <= MAX_LOOPS:
@@ -176,7 +185,15 @@ class Synapsis:
                         yield {"type": "error", "data": data}
                         return
 
-                if "<{uncompleted}>" in full:
+                cmd_results = self._execute_commands(full)
+                if cmd_results:
+                    for cr in cmd_results:
+                        yield {"type": "action", "data": cr}
+
+                has_uncompleted = "<{uncompleted}>" in full
+                has_cmds = len(cmd_results) > 0
+
+                if has_uncompleted or (has_cmds and self.agent.mode == MODE_CRACK):
                     loop_count += 1
                     if loop_count > MAX_LOOPS:
                         yield {"type": "error", "data": "Max loop limit reached."}
@@ -186,34 +203,36 @@ class Synapsis:
                     self._extract_code_context(full, code_ctx)
                     if sid:
                         self.sessions.save_code_context(sid, code_ctx)
-                    yield {"type": "loop_status", "data": "Step " + str(loop_count) + "/" + str(MAX_LOOPS) + " done. Continuing..."}
 
                     loop_context.append({"role": "assistant", "content": clean_resp})
-                    loop_context.append({"role": "user", "content": "<{resume}> Continue with the next step."})
-                    current_prompt = "<{resume}> Continue with the next step."
+                    if cmd_results:
+                        loop_context.append({"role": "user", "content": "<{resume}> Command results:\n" + "\n".join(cmd_results) + "\nContinue."})
+                    else:
+                        loop_context.append({"role": "user", "content": "<{resume}> Continue with the next step."})
+                    current_prompt = loop_context[-1]["content"]
+                    yield {"type": "loop_status", "data": "Step " + str(loop_count) + "/" + str(MAX_LOOPS) + " - Continuing..."}
                     continue
                 else:
                     clean, acts = self.agent.process(full)
                     self._extract_code_context(full, code_ctx)
-
                     session_msgs.append({"role": "user", "content": original_input})
                     session_msgs.append({"role": "assistant", "content": clean})
                     if sid:
                         self.sessions.save_messages(sid, session_msgs)
                         self.sessions.save_code_context(sid, code_ctx)
-
                     if sid == self.active_session_id:
                         self.current_session_msgs = session_msgs
                         self.code_context = code_ctx
-
-                    completed = True
+                    saved = True
                     if acts:
                         yield {"type": "actions", "data": acts}
                     yield {"type": "done", "data": clean}
                     break
 
         except GeneratorExit:
-            if not completed and partial_content.strip():
+            pass
+        finally:
+            if not saved and partial_content.strip():
                 clean, _ = self.agent.process(partial_content)
                 session_msgs.append({"role": "user", "content": original_input})
                 session_msgs.append({"role": "assistant", "content": clean + "\n\n[Response interrupted]"})
@@ -221,7 +240,6 @@ class Synapsis:
                 if sid:
                     self.sessions.save_messages(sid, session_msgs)
                     self.sessions.save_code_context(sid, code_ctx)
-            return
 
     def edit_and_resend(self, index, new_text, session_id=None):
         sid = session_id or self.active_session_id
@@ -238,9 +256,6 @@ class Synapsis:
         if cmd == "/chat":
             self.agent.set_mode(MODE_CHAT)
             return "[OK] Chat mode"
-        if cmd == "/nativeagent":
-            self.agent.set_mode(MODE_NATIVE)
-            return "[OK] Native Agent mode"
         if cmd == "/crackagent":
             self.agent.set_mode(MODE_CRACK)
             return "[OK] Crack Agent mode"
@@ -249,7 +264,6 @@ class Synapsis:
             return "\n".join(str(i) + ". " + m for i, m in enumerate(ms, 1)) if ms else "No memories."
         if cmd == "/clear":
             self.mem.clear()
-            self.hist.clear()
             self.current_session_msgs = []
             self.code_context = {}
             if self.active_session_id:
