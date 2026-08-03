@@ -5,7 +5,7 @@ from synapse.core.engine import Engine
 from synapse.core.memory import MemoryManager
 from synapse.core.history import HistoryManager
 from synapse.core.workspace import Workspace
-from synapse.core.agents import AgentController
+from synapse.core.agents import AgentController, MODE_CHAT, MODE_NATIVE, MODE_CRACK
 from synapse.core.sessions import SessionManager
 
 MAX_LOOPS = 20
@@ -25,6 +25,7 @@ class Synapsis:
         self.code_context = {}
         self.pinned_files = []
         self.custom_system_prompt = ""
+        self.active_session_id = None
         prov = self.cfg.get("default_provider", "nvidia")
         if not self.engine.apply(prov, self.cfg.get("providers", {})):
             raise ValueError("Provider '" + prov + "' not configured.")
@@ -34,6 +35,7 @@ class Synapsis:
 
     def _load_active_session(self):
         if self.sessions.active_id:
+            self.active_session_id = self.sessions.active_id
             data = self.sessions.load(self.sessions.active_id)
             if data:
                 self.current_session_msgs = data.get("messages", [])
@@ -41,8 +43,25 @@ class Synapsis:
                 self.pinned_files = data.get("pinned_files", [])
                 self.custom_system_prompt = data.get("system_prompt", "")
 
+    def _load_session_snapshot(self, sid):
+        data = self.sessions.load(sid) if sid else None
+        if not data:
+            return [], {}, [], ""
+        return (
+            list(data.get("messages", [])),
+            dict(data.get("code_context", {})),
+            list(data.get("pinned_files", [])),
+            data.get("system_prompt", "")
+        )
+
     def switch_provider(self, name):
         return self.engine.apply(name, self.cfg.get("providers", {}))
+
+    def set_mode(self, mode):
+        return self.agent.set_mode(mode)
+
+    def get_mode(self):
+        return self.agent.mode
 
     def new_session(self, title="New Chat"):
         sid = self.sessions.create(title)
@@ -50,11 +69,13 @@ class Synapsis:
         self.code_context = {}
         self.pinned_files = []
         self.custom_system_prompt = ""
+        self.active_session_id = sid
         return sid
 
     def load_session(self, sid):
         data = self.sessions.load(sid)
         if data:
+            self.active_session_id = sid
             self.current_session_msgs = data.get("messages", [])
             self.code_context = data.get("code_context", {})
             self.pinned_files = data.get("pinned_files", [])
@@ -64,11 +85,12 @@ class Synapsis:
 
     def delete_session(self, sid):
         self.sessions.delete(sid)
-        if self.sessions.active_id is None:
+        if self.active_session_id == sid:
             self.current_session_msgs = []
             self.code_context = {}
             self.pinned_files = []
             self.custom_system_prompt = ""
+            self.active_session_id = None
 
     def rename_session(self, sid, title):
         self.sessions.rename(sid, title)
@@ -78,75 +100,59 @@ class Synapsis:
 
     def set_system_prompt(self, prompt):
         self.custom_system_prompt = prompt
-        if self.sessions.active_id:
-            self.sessions.save_system_prompt(self.sessions.active_id, prompt)
-
-    def set_pinned_files(self, files):
-        self.pinned_files = files
-        if self.sessions.active_id:
-            self.sessions.save_pinned_files(self.sessions.active_id, files)
-
-    def get_pinned_files(self):
-        return self.pinned_files
+        if self.active_session_id:
+            self.sessions.save_system_prompt(self.active_session_id, prompt)
 
     def add_pinned_file(self, fname):
         if fname not in self.pinned_files:
             self.pinned_files.append(fname)
-            if self.sessions.active_id:
-                self.sessions.save_pinned_files(self.sessions.active_id, self.pinned_files)
+            if self.active_session_id:
+                self.sessions.save_pinned_files(self.active_session_id, self.pinned_files)
 
     def remove_pinned_file(self, fname):
         if fname in self.pinned_files:
             self.pinned_files.remove(fname)
-            if self.sessions.active_id:
-                self.sessions.save_pinned_files(self.sessions.active_id, self.pinned_files)
+            if self.active_session_id:
+                self.sessions.save_pinned_files(self.active_session_id, self.pinned_files)
 
-    def get_code_context(self):
-        return self.code_context
-
-    def _build_system_block(self):
+    def _build_system_block(self, code_ctx, pinned, sys_prompt):
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         parts = []
-        if self.custom_system_prompt:
-            parts.append(self.custom_system_prompt)
+        if sys_prompt:
+            parts.append(sys_prompt)
         parts.append(self.agent.build_prompt(self.dna, ts))
-        if self.pinned_files:
-            pinned_content = "PINNED FILES (always in context):\n"
-            for fname in self.pinned_files:
+        if pinned:
+            pc = "PINNED FILES (always in context):\n"
+            for fname in pinned:
                 content = self.ws.read(fname)
                 if content:
-                    pinned_content += "\n--- " + fname + " ---\n" + content + "\n"
-            parts.append(pinned_content)
-        if self.code_context:
-            code_ctx = "AI-GENERATED CODE FILES (current versions in context):\n"
-            for fname, content in self.code_context.items():
-                code_ctx += "\n--- " + fname + " ---\n" + content + "\n"
-            parts.append(code_ctx)
+                    pc += "\n--- " + fname + " ---\n" + content + "\n"
+            parts.append(pc)
+        if code_ctx:
+            cc = "AI-GENERATED CODE FILES (current versions):\n"
+            for fname, content in code_ctx.items():
+                cc += "\n--- " + fname + " ---\n" + content + "\n"
+            parts.append(cc)
         return "\n\n".join(parts)
 
-    def _build_loop_messages(self, loop_context, current_prompt):
-        system_content = self._build_system_block()
+    def _build_loop_messages(self, loop_context, current_prompt, session_msgs, code_ctx, pinned, sys_prompt):
+        system_content = self._build_system_block(code_ctx, pinned, sys_prompt)
         msgs = [{"role": "system", "content": system_content}]
-        for m in self.current_session_msgs[-10:]:
+        for m in session_msgs[-10:]:
             msgs.append({"role": m["role"], "content": m["content"]})
         msgs.extend(loop_context)
         msgs.append({"role": "user", "content": current_prompt})
         return msgs
 
-    def _update_code_context(self, full_response):
+    def _extract_code_context(self, full_response, code_ctx):
         writes = re.findall(r'<\{ws_write\(([^)]+)\)\}>(.*?)<\{/ws_write\}>', full_response, re.DOTALL)
         for fname, content in writes:
-            self.code_context[fname] = content.strip()
-        if self.sessions.active_id:
-            self.sessions.save_code_context(self.sessions.active_id, self.code_context)
+            code_ctx[fname] = content.strip()
 
-    def _save_messages(self, original_input, assistant_content):
-        self.current_session_msgs.append({"role": "user", "content": original_input})
-        self.current_session_msgs.append({"role": "assistant", "content": assistant_content})
-        if self.sessions.active_id:
-            self.sessions.save_messages(self.sessions.active_id, self.current_session_msgs)
+    def stream_chat(self, user_input, session_id=None):
+        sid = session_id or self.active_session_id
+        session_msgs, code_ctx, pinned, sys_prompt = self._load_session_snapshot(sid)
 
-    def stream_chat(self, user_input):
         original_input = user_input
         current_prompt = user_input
         loop_context = []
@@ -156,7 +162,7 @@ class Synapsis:
 
         try:
             while loop_count <= MAX_LOOPS:
-                msgs = self._build_loop_messages(loop_context, current_prompt)
+                msgs = self._build_loop_messages(loop_context, current_prompt, session_msgs, code_ctx, pinned, sys_prompt)
                 full = ""
 
                 for ev, data in self.engine.stream(msgs):
@@ -173,11 +179,13 @@ class Synapsis:
                 if "<{uncompleted}>" in full:
                     loop_count += 1
                     if loop_count > MAX_LOOPS:
-                        yield {"type": "error", "data": "Max loop limit reached (" + str(MAX_LOOPS) + ")."}
+                        yield {"type": "error", "data": "Max loop limit reached."}
                         break
 
                     clean_resp = full.replace("<{uncompleted}>", "").strip()
-                    self._update_code_context(full)
+                    self._extract_code_context(full, code_ctx)
+                    if sid:
+                        self.sessions.save_code_context(sid, code_ctx)
                     yield {"type": "loop_status", "data": "Step " + str(loop_count) + "/" + str(MAX_LOOPS) + " done. Continuing..."}
 
                     loop_context.append({"role": "assistant", "content": clean_resp})
@@ -186,8 +194,18 @@ class Synapsis:
                     continue
                 else:
                     clean, acts = self.agent.process(full)
-                    self._update_code_context(full)
-                    self._save_messages(original_input, clean)
+                    self._extract_code_context(full, code_ctx)
+
+                    session_msgs.append({"role": "user", "content": original_input})
+                    session_msgs.append({"role": "assistant", "content": clean})
+                    if sid:
+                        self.sessions.save_messages(sid, session_msgs)
+                        self.sessions.save_code_context(sid, code_ctx)
+
+                    if sid == self.active_session_id:
+                        self.current_session_msgs = session_msgs
+                        self.code_context = code_ctx
+
                     completed = True
                     if acts:
                         yield {"type": "actions", "data": acts}
@@ -197,34 +215,34 @@ class Synapsis:
         except GeneratorExit:
             if not completed and partial_content.strip():
                 clean, _ = self.agent.process(partial_content)
-                self._save_messages(original_input, clean + "\n\n[Response interrupted]")
-                self._update_code_context(partial_content)
+                session_msgs.append({"role": "user", "content": original_input})
+                session_msgs.append({"role": "assistant", "content": clean + "\n\n[Response interrupted]"})
+                self._extract_code_context(partial_content, code_ctx)
+                if sid:
+                    self.sessions.save_messages(sid, session_msgs)
+                    self.sessions.save_code_context(sid, code_ctx)
             return
 
-        finally:
-            if not completed and partial_content.strip():
-                clean, _ = self.agent.process(partial_content)
-                self._save_messages(original_input, clean + "\n\n[Response interrupted]")
-                self._update_code_context(partial_content)
-
-    def edit_and_resend(self, index, new_text):
-        if 0 <= index < len(self.current_session_msgs):
-            self.current_session_msgs = self.current_session_msgs[:index]
-            if self.sessions.active_id:
-                self.sessions.save_messages(self.sessions.active_id, self.current_session_msgs)
-            return self.stream_chat(new_text)
+    def edit_and_resend(self, index, new_text, session_id=None):
+        sid = session_id or self.active_session_id
+        session_msgs, _, _, _ = self._load_session_snapshot(sid)
+        if 0 <= index < len(session_msgs):
+            session_msgs = session_msgs[:index]
+            if sid:
+                self.sessions.save_messages(sid, session_msgs)
+            return self.stream_chat(new_text, sid)
         return iter([{"type": "error", "data": "Invalid message index"}])
 
     def handle_command(self, cmd):
         cmd = cmd.strip()
         if cmd == "/chat":
-            self.agent.set_mode("chat")
+            self.agent.set_mode(MODE_CHAT)
             return "[OK] Chat mode"
         if cmd == "/nativeagent":
-            self.agent.set_mode("nativeagent")
+            self.agent.set_mode(MODE_NATIVE)
             return "[OK] Native Agent mode"
         if cmd == "/crackagent":
-            self.agent.set_mode("crackagent")
+            self.agent.set_mode(MODE_CRACK)
             return "[OK] Crack Agent mode"
         if cmd == "/memory":
             ms = self.mem.get_all()
@@ -234,9 +252,9 @@ class Synapsis:
             self.hist.clear()
             self.current_session_msgs = []
             self.code_context = {}
-            if self.sessions.active_id:
-                self.sessions.save_messages(self.sessions.active_id, [])
-                self.sessions.save_code_context(self.sessions.active_id, {})
+            if self.active_session_id:
+                self.sessions.save_messages(self.active_session_id, [])
+                self.sessions.save_code_context(self.active_session_id, {})
             return "[OK] Cleared"
         if cmd.startswith("/ws "):
             parts = cmd.split()
