@@ -44,6 +44,7 @@ app = None
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
+
     def do_GET(self):
         if self.path == '/':
             self.send_response(200)
@@ -69,16 +70,21 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         try:
             for chunk in app.stream_chat(msg):
-                if chunk["type"] == "content":
-                    self.wfile.write(f"data: {json.dumps({'content': chunk['data']})}\n\n".encode())
+                ctype = chunk["type"]
+                cdata = chunk["data"]
+                if ctype == "content":
+                    payload = json.dumps({"content": cdata})
+                    self.wfile.write(f"data: {payload}\n\n".encode())
                     self.wfile.flush()
-                elif chunk["type"] == "error":
-                    self.wfile.write(f"data: {json.dumps({'content': f'[Error] {chunk[\"data\"]}'})}\n\n".encode())
+                elif ctype == "error":
+                    payload = json.dumps({"content": f"[Error] {cdata}"})
+                    self.wfile.write(f"data: {payload}\n\n".encode())
                     self.wfile.flush()
             self.wfile.write(b"data: [DONE]\n\n")
             self.wfile.flush()
         except Exception as e:
-            self.wfile.write(f"data: {json.dumps({'content': f'[Server Error] {str(e)}'})}\n\n".encode())
+            payload = json.dumps({"content": f"[Server Error] {str(e)}"})
+            self.wfile.write(f"data: {payload}\n\n".encode())
             self.wfile.flush()
 
 def run_gui():
@@ -91,10 +97,13 @@ def run_gui():
     port = 8080
     server = ThreadingHTTPServer(('127.0.0.1', port), Handler)
     url = f"http://127.0.0.1:{port}"
-    print(f"\033[1;36m  SYNAPSE v3.0.0 GUI\033[0m")
+    print("\033[1;36m  SYNAPSE v3.0.0 GUI\033[0m")
     print(f"  \033[32mRunning at {url}\033[0m")
     print("  Press Ctrl+C to stop.")
-    webbrowser.open(url)
+    try:
+        webbrowser.open(url)
+    except Exception:
+        pass
     try:
         server.serve_forever()
     except KeyboardInterrupt:
