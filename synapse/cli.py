@@ -9,9 +9,9 @@ def run_cli():
         print("\033[31m[!] " + str(e) + "\033[0m")
         return
     os.system('')
-    print("\033[1;36m  SYNAPSE v3.0.0 CLI\033[0m")
+    print("\033[1;36m  SYNAPSE v4.0.0\033[0m")
     print("  \033[90m" + app.engine.provider_name.upper() + " | " + app.engine.model + " | " + app.agent.mode + "\033[0m")
-    print("  \033[90mModes: /chat /code /agent\033[0m\n")
+    print("  \033[90m/chat /code /agent /tree /memory /clear\033[0m\n")
     try:
         while True:
             try:
