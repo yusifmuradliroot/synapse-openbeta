@@ -347,6 +347,7 @@ function sendMsg(){
             if(obj.type==='reasoning'){if(!thinkBox)thinkBox=addMsg('thinking','');thinkBox.textContent+=obj.content;chat.scrollTop=chat.scrollHeight;}
             else if(obj.type==='content'){if(!aiBox)aiBox=addMsg('ai','');appendToMsg(aiBox,obj.content,'ai');}
             else if(obj.type==='error'){if(!aiBox)aiBox=addMsg('err','');aiBox.textContent+=obj.content;}
+            else if(obj.type==='loop_status'){if(!aiBox)aiBox=addMsg('ai','');appendToMsg(aiBox,'\\n['+obj.content+']\\n','ai');}
             else if(obj.type==='action'){if(!aiBox)aiBox=addMsg('ai','');appendToMsg(aiBox,obj.content+'\\n','ai');}
           }catch(e){}
         }
@@ -608,6 +609,10 @@ class Handler(BaseHTTPRequestHandler):
                 cd = chunk.get("data", "")
                 if ct in ("reasoning", "content", "error"):
                     payload = json.dumps({"type": ct, "content": cd})
+                    self.wfile.write(("data: " + payload + "\n\n").encode('utf-8'))
+                    self.wfile.flush()
+                elif ct == "loop_status":
+                    payload = json.dumps({"type": "loop_status", "content": cd})
                     self.wfile.write(("data: " + payload + "\n\n").encode('utf-8'))
                     self.wfile.flush()
                 elif ct == "actions":
