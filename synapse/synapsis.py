@@ -5,11 +5,11 @@ from synapse.core.engine import Engine
 from synapse.core.memory import MemoryManager
 from synapse.core.history import HistoryManager
 from synapse.core.workspace import Workspace
-from synapse.core.agents import AgentController, MODE_CHAT, MODE_CRACK
+from synapse.core.agents import AgentController, MODE_CHAT, MODE_CODE, MODE_AGENT
 from synapse.core.sessions import SessionManager
 from synapse.core.terminal import TerminalExecutor
 
-MAX_LOOPS = 20
+MAX_LOOPS = 25
 
 class Synapsis:
     def __init__(self):
@@ -168,6 +168,7 @@ class Synapsis:
         loop_count = 0
         partial_content = ""
         saved = False
+        mode = self.agent.mode
 
         try:
             while loop_count <= MAX_LOOPS:
@@ -191,9 +192,10 @@ class Synapsis:
                         yield {"type": "action", "data": cr}
 
                 has_uncompleted = "<{uncompleted}>" in full
-                has_cmds = len(cmd_results) > 0
+                has_actions = self.agent.has_actions(full) or len(cmd_results) > 0
+                should_loop = has_uncompleted or (has_actions and mode == MODE_AGENT)
 
-                if has_uncompleted or (has_cmds and self.agent.mode == MODE_CRACK):
+                if should_loop:
                     loop_count += 1
                     if loop_count > MAX_LOOPS:
                         yield {"type": "error", "data": "Max loop limit reached."}
@@ -206,7 +208,7 @@ class Synapsis:
 
                     loop_context.append({"role": "assistant", "content": clean_resp})
                     if cmd_results:
-                        loop_context.append({"role": "user", "content": "<{resume}> Command results:\n" + "\n".join(cmd_results) + "\nContinue."})
+                        loop_context.append({"role": "user", "content": "<{resume}> Command results:\n" + "\n".join(cmd_results) + "\nAnalyze results and continue."})
                     else:
                         loop_context.append({"role": "user", "content": "<{resume}> Continue with the next step."})
                     current_prompt = loop_context[-1]["content"]
@@ -254,11 +256,14 @@ class Synapsis:
     def handle_command(self, cmd):
         cmd = cmd.strip()
         if cmd == "/chat":
-            self.agent.set_mode(MODE_CHAT)
+            self.set_mode(MODE_CHAT)
             return "[OK] Chat mode"
-        if cmd == "/crackagent":
-            self.agent.set_mode(MODE_CRACK)
-            return "[OK] Crack Agent mode"
+        if cmd == "/code":
+            self.set_mode(MODE_CODE)
+            return "[OK] Code mode"
+        if cmd == "/agent":
+            self.set_mode(MODE_AGENT)
+            return "[OK] Agent mode"
         if cmd == "/memory":
             ms = self.mem.get_all()
             return "\n".join(str(i) + ". " + m for i, m in enumerate(ms, 1)) if ms else "No memories."
