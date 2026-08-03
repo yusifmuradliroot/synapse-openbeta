@@ -44,7 +44,7 @@ DEFAULT_DNA = {
         "Save facts with <{mem}>fact<{mem}>.",
         "Output <{time}> for current time.",
         "Use <{evolve(proposal)}> to suggest system improvements (requires user approval).",
-        "Use workspace tags for file operations: <{ws_read(file)}>, <{ws_write(file)}>content<{/ws_write}>, <{ws_list}>, <{ws_delete(file)}>."
+        "CRITICAL: For workspace files, NEVER output JSON. You MUST use ONLY these tags: <{ws_write(filename)}>content<{/ws_write}>."
     ],
     "immutable": True
 }
@@ -58,60 +58,34 @@ def do_update():
         with tempfile.TemporaryDirectory() as tmpdir:
             zip_path = os.path.join(tmpdir, "repo.zip")
             urllib.request.urlretrieve(zip_url, zip_path)
-            
-            with zipfile.ZipFile(zip_path, 'r') as z:
-                z.extractall(tmpdir)
-                
+            with zipfile.ZipFile(zip_path, 'r') as z: z.extractall(tmpdir)
             dirs = [d for d in os.listdir(tmpdir) if os.path.isdir(os.path.join(tmpdir, d))]
-            if not dirs:
-                print("\\033[31m[!] Extraction failed.\\033[0m")
-                return False
+            if not dirs: print("\\033[31m[!] Extraction failed.\\033[0m"); return False
             repo_dir = os.path.join(tmpdir, dirs[0])
-            
-            print("\\033[33m[*] Installing update (this may take a moment)...\\033[0m")
-            result = subprocess.run(
-                [sys.executable, "-m", "pip", "install", "--user", "--force-reinstall", "-q", repo_dir],
-                capture_output=True, text=True
-            )
-            if result.returncode == 0:
-                print("\\033[32m[✓] Update successful! Please run 'synapse' again.\\033[0m")
-                return True
-            else:
-                print(f"\\033[31m[!] Install failed: {result.stderr.strip()}\\033[0m")
-                return False
-    except Exception as e:
-        print(f"\\033[31m[!] Update error: {e}\\033[0m")
-        return False
+            print("\\033[33m[*] Installing update...\\033[0m")
+            result = subprocess.run([sys.executable, "-m", "pip", "install", "--user", "--force-reinstall", "-q", repo_dir], capture_output=True, text=True)
+            if result.returncode == 0: print("\\033[32m[✓] Update successful! Run 'synapse' again.\\033[0m"); return True
+            else: print(f"\\033[31m[!] Install failed: {result.stderr.strip()}\\033[0m"); return False
+    except Exception as e: print(f"\\033[31m[!] Update error: {e}\\033[0m"); return False
 
 def init_workspace():
     WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
     WS_DIR.mkdir(parents=True, exist_ok=True)
     (WS_DIR / "default").mkdir(exist_ok=True)
-    
-    if not CONFIG_PATH.exists():
-        CONFIG_PATH.write_text(json.dumps(DEFAULT_CONFIG, indent=2), encoding="utf-8")
-    if not DNA_PATH.exists():
-        DNA_PATH.write_text(json.dumps(DEFAULT_DNA, indent=2), encoding="utf-8")
-    if not EVOLUTION_PATH.exists():
-        EVOLUTION_PATH.write_text(json.dumps(DEFAULT_EVOLUTION, indent=2), encoding="utf-8")
-    if not MEMORY_PATH.exists():
-        MEMORY_PATH.write_text("[]", encoding="utf-8")
-    if not HISTORY_PATH.exists():
-        HISTORY_PATH.write_text(json.dumps({"summary": "", "recent": [], "chat_counter": 0}, indent=2), encoding="utf-8")
+    if not CONFIG_PATH.exists(): CONFIG_PATH.write_text(json.dumps(DEFAULT_CONFIG, indent=2), encoding="utf-8")
+    if not DNA_PATH.exists(): DNA_PATH.write_text(json.dumps(DEFAULT_DNA, indent=2), encoding="utf-8")
+    if not EVOLUTION_PATH.exists(): EVOLUTION_PATH.write_text(json.dumps(DEFAULT_EVOLUTION, indent=2), encoding="utf-8")
+    if not MEMORY_PATH.exists(): MEMORY_PATH.write_text("[]", encoding="utf-8")
+    if not HISTORY_PATH.exists(): HISTORY_PATH.write_text(json.dumps({"summary": "", "recent": [], "chat_counter": 0}, indent=2), encoding="utf-8")
 
 def run():
-    if "--update" in sys.argv:
-        do_update()
-        sys.exit(0)
-        
+    if "--update" in sys.argv: do_update(); sys.exit(0)
     init_workspace()
     cfg = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
     providers = cfg.get("providers", {})
     needs_setup = any("YOUR_" in providers.get(p, {}).get("api_key", "") for p in ["nvidia", "openrouter", "cohere"])
-    
     if needs_setup:
-        print("\\n[!] First run detected. Please configure your API keys.")
-        print("(Leave empty to skip a provider)\\n")
+        print("\\n[!] First run. Configure API keys. (Empty to skip)\\n")
         for p in ["nvidia", "openrouter", "cohere"]:
             if "YOUR_" in providers[p].get("api_key", ""):
                 k = input(f"Enter {p.upper()} API Key: ").strip()
@@ -119,8 +93,7 @@ def run():
         configured = [p for p in ["nvidia", "openrouter", "cohere"] if "YOUR_" not in providers[p].get("api_key", "")]
         if configured: cfg["default_provider"] = configured[0]
         CONFIG_PATH.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
-        print("[✓] Configuration saved.\\n")
-
+        print("[✓] Saved.\\n")
     os.chdir(WORKSPACE_DIR)
     from synapse.main import TerminalChat
     TerminalChat(base_dir=WORKSPACE_DIR).run()
@@ -231,7 +204,9 @@ class TerminalChat:
             prompt_parts.extend(f"- {r}" for r in evo_rules)
         prompt_parts.append(f"ZONE 3 (ACTIVE WORKSPACE: {self.active_ws}):")
         prompt_parts.append(f"- Files: {', '.join(ws_files) if ws_files else 'Empty'}")
-        prompt_parts.append("- Use ws_ tags to manage files here. High I/O area. Tasks are ephemeral.")
+        prompt_parts.append("- STRICT RULE: To create/edit files, you MUST use ONLY this format:")
+        prompt_parts.append("  <{ws_write(filename)}>\\nFULL_FILE_CONTENT\\n<{/ws_write}>")
+        prompt_parts.append("- DO NOT output JSON. DO NOT use markdown for the tags. Write files one by one.")
         if self.memories:
             prompt_parts.append("LONG-TERM MEMORIES:")
             prompt_parts.extend(f"- {m}" for m in self.memories)
@@ -328,7 +303,7 @@ class TerminalChat:
     def _render(self, reason, content, complete=False, status=""):
         self._clear()
         print(BANNER)
-        print(f"\\033[0;37m  v1.2.0 | DNA / Evolution / Workspace\\033[0m")
+        print(f"\\033[0;37m  v1.2.1 | DNA / Evolution / Workspace\\033[0m")
         pfx = "" if self.tokens_exact else "~"
         print(f"\\033[1;37m{'='*62}\\033[0m")
         print(f"\\033[36m[Context] Sys:{pfx}{self.ctx_sys} Hist:{pfx}{self.ctx_hist} In:{pfx}{self.ctx_in} Out:{pfx}{self.ctx_out}\\033[0m")
@@ -348,7 +323,7 @@ class TerminalChat:
     def run(self):
         self._clear()
         print(BANNER)
-        print(f"\\033[0;37m  v1.2.0 | DNA / Evolution / Workspace\\033[0m")
+        print(f"\\033[0;37m  v1.2.1 | DNA / Evolution / Workspace\\033[0m")
         print(f"Env: {self.platform_name}{' (Termux)' if self.is_termux else ''} | Python {platform.python_version()}")
         print(f"Provider: {self.current_provider.upper()} | Model: {self.model} | WS: {self.active_ws}")
         print("Commands: exit, quit, /memory, /clear, /ws, /evolve, /accept <id>, /reject <id>, /nvidia, /cohere, /openrouter")
@@ -414,33 +389,42 @@ class TerminalChat:
                 self.sess_in+=self.ctx_in; self.sess_out+=self.ctx_out
 
                 evo_match = re.search(r'<\\{evolve\\((.*?)\\)\\}>', cur_c, re.DOTALL)
+                ws_write = re.findall(r'<\\{ws_write\\(([^)]+)\\)\\}>(.*?)<\\{/ws_write\\}>', cur_c, re.DOTALL)
                 ws_read = re.search(r'<\\{ws_read\\(([^)]+)\\)\\}>', cur_c)
-                ws_write = re.search(r'<\\{ws_write\\(([^)]+)\\)\\}>(.*?)<\\{/ws_write\\}>', cur_c, re.DOTALL)
                 ws_list = '<{ws_list}>' in cur_c
                 ws_del = re.search(r'<\\{ws_delete\\(([^)]+)\\)\\}>', cur_c)
                 
                 feedback = []
-                if evo_match:
-                    prop = evo_match.group(1).strip()
-                    pid = len(self.evolution.get("proposals",[]))+1
-                    self.evolution.setdefault("proposals",[]).append({"id":pid,"proposal":prop,"status":"pending","ts":self._get_time()})
-                    self._save_json(self.evo_path, self.evolution)
-                    feedback.append(f"[Evolution] Proposal #{pid} saved. Run /accept {pid} to apply.")
-                if ws_read:
-                    fp=self._ws_path(ws_read.group(1))
-                    if fp and fp.exists(): feedback.append(f"[WS Read]\\n{fp.read_text(encoding='utf-8',errors='ignore')}")
-                    else: feedback.append("[WS Read] File not found or out of bounds.")
-                if ws_write:
-                    fp=self._ws_path(ws_write.group(1))
-                    if fp: fp.write_text(ws_write.group(2), encoding='utf-8'); feedback.append(f"[WS Write] Saved {fp.name}")
-                    else: feedback.append("[WS Write] Invalid path.")
-                if ws_list:
-                    files=[f.name for f in (self.ws_dir/self.active_ws).iterdir() if f.is_file()]
-                    feedback.append(f"[WS List] {', '.join(files) if files else 'Empty'}")
-                if ws_del:
-                    fp=self._ws_path(ws_del.group(1))
-                    if fp and fp.exists(): fp.unlink(); feedback.append(f"[WS Delete] Removed {fp.name}")
-                    else: feedback.append("[WS Delete] Not found.")
+                
+                # Detect invalid JSON output for workspace tasks
+                if ("action" in cur_c and "structure" in cur_c) or (cur_c.strip().startswith("{") and cur_c.strip().endswith("}")):
+                    feedback.append("[ERROR] Invalid format. DO NOT output JSON. You MUST use <{ws_write(filename)}>content<{/ws_write}> tags for each file.")
+                else:
+                    if evo_match:
+                        prop = evo_match.group(1).strip()
+                        pid = len(self.evolution.get("proposals",[]))+1
+                        self.evolution.setdefault("proposals",[]).append({"id":pid,"proposal":prop,"status":"pending","ts":self._get_time()})
+                        self._save_json(self.evo_path, self.evolution)
+                        feedback.append(f"[Evolution] Proposal #{pid} saved. Run /accept {pid} to apply.")
+                    if ws_read:
+                        fp=self._ws_path(ws_read.group(1))
+                        if fp and fp.exists(): feedback.append(f"[WS Read]\\n{fp.read_text(encoding='utf-8',errors='ignore')}")
+                        else: feedback.append("[WS Read] File not found.")
+                    if ws_write:
+                        for fname, content in ws_write:
+                            fp=self._ws_path(fname)
+                            if fp:
+                                fp.parent.mkdir(parents=True, exist_ok=True)
+                                fp.write_text(content.strip(), encoding='utf-8')
+                                feedback.append(f"[WS Write] Saved {fname}")
+                            else: feedback.append(f"[WS Write] Invalid path: {fname}")
+                    if ws_list:
+                        files=[f.name for f in (self.ws_dir/self.active_ws).iterdir() if f.is_file()]
+                        feedback.append(f"[WS List] {', '.join(files) if files else 'Empty'}")
+                    if ws_del:
+                        fp=self._ws_path(ws_del.group(1))
+                        if fp and fp.exists(): fp.unlink(); feedback.append(f"[WS Delete] Removed {fp.name}")
+                        else: feedback.append("[WS Delete] Not found.")
 
                 cleaned = re.sub(r'<\\{evolve\\(.*?\\)\\}>', '', cur_c, flags=re.DOTALL)
                 cleaned = re.sub(r'<\\{ws_.*?\\}>.*?<\\{/ws_.*?\\}>', '', cleaned, flags=re.DOTALL)
@@ -481,7 +465,7 @@ with open(os.path.join(PKG_DIR, "main.py"), "w", encoding="utf-8") as f:
 
 setup(
     name="synapse-ai-cli",
-    version="1.2.0",
+    version="1.2.1",
     description="Synapse AI Terminal Client with DNA/Evolution/Workspace Architecture",
     packages=["synapse"],
     python_requires=">=3.8",
