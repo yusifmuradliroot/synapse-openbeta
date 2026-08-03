@@ -8,7 +8,7 @@ from synapse.core.workspace import Workspace
 from synapse.core.agents import AgentController
 from synapse.core.sessions import SessionManager
 
-MAX_LOOPS = 10
+MAX_LOOPS = 20
 
 class Synapsis:
     def __init__(self):
@@ -163,26 +163,24 @@ class Synapsis:
             if "<{uncompleted}>" in full:
                 loop_count += 1
                 if loop_count > MAX_LOOPS:
-                    yield {"type": "error", "data": "Max auto-resume limit reached (" + str(MAX_LOOPS) + ")."}
+                    yield {"type": "error", "data": "Max loop limit reached (" + str(MAX_LOOPS) + ")."}
                     break
 
                 clean_resp = full.replace("<{uncompleted}>", "").strip()
                 self._update_code_context(full)
-                yield {"type": "loop_status", "data": "Auto-resuming (" + str(loop_count) + "/" + str(MAX_LOOPS) + ")..."}
+                yield {"type": "loop_status", "data": "Step " + str(loop_count) + "/" + str(MAX_LOOPS) + " done. Continuing..."}
 
                 loop_context.append({"role": "assistant", "content": clean_resp})
-                loop_context.append({"role": "user", "content": "<{resume}>"})
-                current_prompt = "<{resume}>"
+                loop_context.append({"role": "user", "content": "<{resume}> Continue with the next step."})
+                current_prompt = "<{resume}> Continue with the next step."
                 continue
             else:
                 clean, acts = self.agent.process(full)
                 self._update_code_context(full)
-                
                 self.current_session_msgs.append({"role": "user", "content": original_input})
                 self.current_session_msgs.append({"role": "assistant", "content": clean})
                 if self.sessions.active_id:
                     self.sessions.save_messages(self.sessions.active_id, self.current_session_msgs)
-
                 if acts:
                     yield {"type": "actions", "data": acts}
                 yield {"type": "done", "data": clean}
