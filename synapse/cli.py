@@ -31,8 +31,6 @@ def run_cli():
             if not ui:
                 continue
 
-            thinking_text = ""
-            content_text = ""
             in_thinking = False
             in_content = False
 
@@ -47,7 +45,6 @@ def run_cli():
                         in_thinking = True
                     sys.stdout.write(cdata)
                     sys.stdout.flush()
-                    thinking_text += cdata
 
                 elif ctype == "content":
                     if in_thinking:
@@ -59,7 +56,6 @@ def run_cli():
                         in_content = True
                     sys.stdout.write(cdata)
                     sys.stdout.flush()
-                    content_text += cdata
 
                 elif ctype == "loop_status":
                     if in_thinking:
@@ -89,9 +85,7 @@ def run_cli():
                     if in_content:
                         sys.stdout.write("\n")
                     pfx = "" if app.engine.tokens_exact else "~"
-                    tin = app.engine.ctx_in
-                    tout = app.engine.ctx_out
-                    print("\033[90m[Tokens] In:" + pfx + str(tin) + " Out:" + pfx + str(tout) + "\033[0m\n")
+                    print("\033[90m[Tokens] In:" + pfx + str(app.engine.ctx_in) + " Out:" + pfx + str(app.engine.ctx_out) + "\033[0m\n")
 
     except KeyboardInterrupt:
         print("\n\033[33mSaved.\033[0m")
