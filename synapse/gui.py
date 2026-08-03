@@ -43,7 +43,8 @@ btn.onclick=send;inp.onkeydown=e=>{if(e.key==='Enter')send()};
 app = None
 
 class Handler(BaseHTTPRequestHandler):
-    def log_message(self, *a): pass
+    def log_message(self, *a):
+        pass
 
     def do_GET(self):
         if self.path == '/':
@@ -60,31 +61,42 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
             return
+        
         length = int(self.headers.get('Content-Length', 0))
         body = json.loads(self.rfile.read(length))
         msg = body.get('message', '')
+        
         self.send_response(200)
         self.send_header('Content-Type', 'text/event-stream')
         self.send_header('Cache-Control', 'no-cache')
         self.send_header('Connection', 'keep-alive')
         self.end_headers()
+        
         try:
             for chunk in app.stream_chat(msg):
                 ctype = chunk["type"]
                 cdata = chunk["data"]
+                
                 if ctype == "content":
                     payload = json.dumps({"content": cdata})
-                    self.wfile.write(f"data: {payload}\n\n".encode())
+                    line = "data: " + payload + "\n\n"
+                    self.wfile.write(line.encode())
                     self.wfile.flush()
                 elif ctype == "error":
-                    payload = json.dumps({"content": f"[Error] {cdata}"})
-                    self.wfile.write(f"data: {payload}\n\n".encode())
+                    err_msg = "[Error] " + str(cdata)
+                    payload = json.dumps({"content": err_msg})
+                    line = "data: " + payload + "\n\n"
+                    self.wfile.write(line.encode())
                     self.wfile.flush()
+            
             self.wfile.write(b"data: [DONE]\n\n")
             self.wfile.flush()
+            
         except Exception as e:
-            payload = json.dumps({"content": f"[Server Error] {str(e)}"})
-            self.wfile.write(f"data: {payload}\n\n".encode())
+            err_msg = "[Server Error] " + str(e)
+            payload = json.dumps({"content": err_msg})
+            line = "data: " + payload + "\n\n"
+            self.wfile.write(line.encode())
             self.wfile.flush()
 
 def run_gui():
@@ -92,18 +104,22 @@ def run_gui():
     try:
         app = Synapsis()
     except ValueError as e:
-        print(f"[!] {e}")
+        print("[!] " + str(e))
         return
+    
     port = 8080
     server = ThreadingHTTPServer(('127.0.0.1', port), Handler)
-    url = f"http://127.0.0.1:{port}"
+    url = "http://127.0.0.1:" + str(port)
+    
     print("\033[1;36m  SYNAPSE v3.0.0 GUI\033[0m")
-    print(f"  \033[32mRunning at {url}\033[0m")
+    print("  \033[32mRunning at " + url + "\033[0m")
     print("  Press Ctrl+C to stop.")
+    
     try:
         webbrowser.open(url)
     except Exception:
         pass
+    
     try:
         server.serve_forever()
     except KeyboardInterrupt:
