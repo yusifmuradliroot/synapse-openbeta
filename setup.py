@@ -16,7 +16,8 @@ import urllib.request
 import subprocess
 from pathlib import Path
 
-WORKSPACE_DIR = Path.home() / ".synapse"
+# Changed to visible directory for easier access on Termux/Linux/Windows
+WORKSPACE_DIR = Path.home() / "synapse"
 CONFIG_PATH = WORKSPACE_DIR / "config.json"
 DNA_PATH = WORKSPACE_DIR / "dna.json"
 EVOLUTION_PATH = WORKSPACE_DIR / "evolution.json"
@@ -303,7 +304,7 @@ class TerminalChat:
     def _render(self, reason, content, complete=False, status=""):
         self._clear()
         print(BANNER)
-        print(f"\\033[0;37m  v1.2.1 | DNA / Evolution / Workspace\\033[0m")
+        print(f"\\033[0;37m  v1.2.2 | DNA / Evolution / Workspace\\033[0m")
         pfx = "" if self.tokens_exact else "~"
         print(f"\\033[1;37m{'='*62}\\033[0m")
         print(f"\\033[36m[Context] Sys:{pfx}{self.ctx_sys} Hist:{pfx}{self.ctx_hist} In:{pfx}{self.ctx_in} Out:{pfx}{self.ctx_out}\\033[0m")
@@ -323,7 +324,7 @@ class TerminalChat:
     def run(self):
         self._clear()
         print(BANNER)
-        print(f"\\033[0;37m  v1.2.1 | DNA / Evolution / Workspace\\033[0m")
+        print(f"\\033[0;37m  v1.2.2 | DNA / Evolution / Workspace\\033[0m")
         print(f"Env: {self.platform_name}{' (Termux)' if self.is_termux else ''} | Python {platform.python_version()}")
         print(f"Provider: {self.current_provider.upper()} | Model: {self.model} | WS: {self.active_ws}")
         print("Commands: exit, quit, /memory, /clear, /ws, /evolve, /accept <id>, /reject <id>, /nvidia, /cohere, /openrouter")
@@ -396,7 +397,6 @@ class TerminalChat:
                 
                 feedback = []
                 
-                # Detect invalid JSON output for workspace tasks
                 if ("action" in cur_c and "structure" in cur_c) or (cur_c.strip().startswith("{") and cur_c.strip().endswith("}")):
                     feedback.append("[ERROR] Invalid format. DO NOT output JSON. You MUST use <{ws_write(filename)}>content<{/ws_write}> tags for each file.")
                 else:
@@ -465,7 +465,7 @@ with open(os.path.join(PKG_DIR, "main.py"), "w", encoding="utf-8") as f:
 
 setup(
     name="synapse-ai-cli",
-    version="1.2.1",
+    version="1.2.2",
     description="Synapse AI Terminal Client with DNA/Evolution/Workspace Architecture",
     packages=["synapse"],
     python_requires=">=3.8",
