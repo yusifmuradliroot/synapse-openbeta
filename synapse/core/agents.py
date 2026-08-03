@@ -1,9 +1,8 @@
 import re
 from synapse.core.workspace import Workspace
-from synapse.core.memory import MemoryManager
-from synapse.core.history import HistoryManager
 
-MODE_CHAT, MODE_NATIVE, MODE_CRACK = "chat", "nativeagent", "crackagent"
+MODE_CHAT = "chat"
+MODE_CRACK = "crackagent"
 
 class AgentController:
     def __init__(self, engine, ws, mem, hist):
@@ -14,7 +13,7 @@ class AgentController:
         self.mode = MODE_CHAT
 
     def set_mode(self, m):
-        if m in (MODE_CHAT, MODE_NATIVE, MODE_CRACK):
+        if m in (MODE_CHAT, MODE_CRACK):
             self.mode = m
             return True
         return False
@@ -23,22 +22,19 @@ class AgentController:
         p = [f"TIME: {time_str}", "RULES: Direct answers only. No filler. Use markdown. Be concise."]
         p.append(f"WS: {self.ws.active} | Files: {', '.join(self.ws.list_files()) or 'Empty'}")
         p.append("File ops: <{ws_write(f)}>content<{/ws_write}> ONLY.")
-
+        p.append("Terminal ops: <{cmd(command)}> to run shell commands. Output will be returned automatically.")
         p.append("LOOP PROTOCOL (CRITICAL):")
-        p.append("- For large tasks (websites, apps, multi-file projects), you MUST break work into small steps.")
-        p.append("- Complete ONLY ONE file or ONE section per response.")
-        p.append("- Maximum 80 lines of code per response. NEVER exceed this.")
-        p.append("- After each step, you MUST end with <{uncompleted}> to continue.")
-        p.append("- Do NOT try to finish everything at once. Work incrementally.")
-        p.append("- When ALL steps are truly done, finish WITHOUT <{uncompleted}>.")
-        p.append("- Example: Step 1: create index.html, end with <{uncompleted}>. Step 2: create style.css, end with <{uncompleted}>. Step 3: create script.js, finish without tag.")
+        p.append("- For large tasks, break work into small steps.")
+        p.append("- Complete ONLY ONE file or ONE action per response.")
+        p.append("- Maximum 80 lines of code per response.")
+        p.append("- After each step, end with <{uncompleted}> to continue.")
+        p.append("- When ALL steps are done, finish WITHOUT <{uncompleted}>.")
 
-        if self.mode == MODE_NATIVE:
-            p.append("MODE: NATIVE AGENT - Multi-step, use loop protocol until done.")
-        elif self.mode == MODE_CRACK:
-            p.append("MODE: CRACK AGENT - Parse tags, loop on actions, use loop protocol.")
+        if self.mode == MODE_CRACK:
+            p.append("MODE: CRACK AGENT - Full autonomous mode. Use terminal commands, file ops, and loop protocol freely.")
+            p.append("You can run ANY shell command via <{cmd(command)}>. Use it to install packages, run scripts, test code, list files, etc.")
         else:
-            p.append("MODE: CHAT - Use loop protocol for multi-step tasks.")
+            p.append("MODE: CHAT - Normal conversation. Use loop protocol for multi-step tasks.")
 
         ms = self.mem.get_all()
         if ms:
@@ -66,8 +62,9 @@ class AgentController:
         clean = re.sub(r'<\{ws_(?:read|delete|list)\([^)]*\)\}>', '', clean)
         clean = re.sub(r'<\{ws_list\}>', '', clean)
         clean = re.sub(r'<\{mem\}>.*?<\{mem\}>', '', clean, flags=re.DOTALL)
+        clean = re.sub(r'<\{cmd\([^)]*\)\}>', '', clean)
         clean = clean.replace("<{uncompleted}>", "").replace("<{resume}>", "").strip()
         return clean, acts
 
-    def should_loop(self):
-        return self.mode in (MODE_NATIVE, MODE_CRACK)
+    def extract_commands(self, content):
+        return re.findall(r'<\{cmd\(([^)]+)\)\}>', content)
