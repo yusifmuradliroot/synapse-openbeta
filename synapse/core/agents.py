@@ -23,12 +23,16 @@ class AgentController:
         p = [f"TIME: {time_str}", "RULES: Direct answers only. No filler. Use markdown. Be concise."]
         p.append(f"WS: {self.ws.active} | Files: {', '.join(self.ws.list_files()) or 'Empty'}")
         p.append("File ops: <{ws_write(f)}>content<{/ws_write}> ONLY.")
+        
+        p.append("LOOP PROTOCOL: If your task is NOT fully complete, you MUST end your response with <{uncompleted}>. The system will automatically send <{resume}> to continue. When fully complete, finish normally without <{uncompleted}>.")
+        
         if self.mode == MODE_NATIVE:
-            p.append("MODE: NATIVE AGENT - Multi-step, loop until done.")
+            p.append("MODE: NATIVE AGENT - Multi-step, use loop protocol until done.")
         elif self.mode == MODE_CRACK:
-            p.append("MODE: CRACK AGENT - Parse tags, loop on actions.")
+            p.append("MODE: CRACK AGENT - Parse tags, loop on actions, use loop protocol.")
         else:
-            p.append("MODE: CHAT - Single response.")
+            p.append("MODE: CHAT - Single response. Use loop protocol only if explicitly asked for multi-step.")
+            
         ms = self.mem.get_all()
         if ms:
             p.append("MEMORIES:\n" + "\n".join(f"- {m}" for m in ms[-10:]))
@@ -51,10 +55,12 @@ class AgentController:
         for tag in re.findall(r'<\{mem\}>(.*?)<\{mem\}>', content, re.DOTALL):
             if self.mem.add(tag):
                 acts.append("[Mem] Saved")
+                
         clean = re.sub(r'<\{ws_write\([^)]+\)\}>.*?<\{/ws_write\}>', '', content, flags=re.DOTALL)
         clean = re.sub(r'<\{ws_(?:read|delete|list)\([^)]*\)\}>', '', clean)
         clean = re.sub(r'<\{ws_list\}>', '', clean)
-        clean = re.sub(r'<\{mem\}>.*?<\{mem\}>', '', clean, flags=re.DOTALL).strip()
+        clean = re.sub(r'<\{mem\}>.*?<\{mem\}>', '', clean, flags=re.DOTALL)
+        clean = clean.replace("<{uncompleted}>", "").replace("<{resume}>", "").strip()
         return clean, acts
 
     def should_loop(self):
