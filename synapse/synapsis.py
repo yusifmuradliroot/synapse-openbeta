@@ -6,6 +6,7 @@ from synapse.core.memory import MemoryManager
 from synapse.core.history import HistoryManager
 from synapse.core.workspace import Workspace
 from synapse.core.agents import AgentController
+from synapse.core.sessions import SessionManager
 
 class Synapsis:
     def __init__(self):
@@ -16,20 +17,45 @@ class Synapsis:
         self.mem = MemoryManager()
         self.hist = HistoryManager()
         self.ws = Workspace()
+        self.sessions = SessionManager()
         self.agent = AgentController(self.engine, self.ws, self.mem, self.hist)
+        self.current_session_msgs = []
         prov = self.cfg.get("default_provider", "nvidia")
         if not self.engine.apply(prov, self.cfg.get("providers", {})):
             raise ValueError("Provider '" + prov + "' not configured.")
+        if not self.sessions.list_all():
+            self.sessions.create("Default Session")
 
     def switch_provider(self, name):
-        if self.engine.apply(name, self.cfg.get("providers", {})):
+        return self.engine.apply(name, self.cfg.get("providers", {}))
+
+    def new_session(self, title="New Chat"):
+        sid = self.sessions.create(title)
+        self.current_session_msgs = []
+        self.hist.clear()
+        return sid
+
+    def load_session(self, sid):
+        data = self.sessions.load(sid)
+        if data:
+            self.current_session_msgs = data.get("messages", [])
             return True
         return False
+
+    def delete_session(self, sid):
+        self.sessions.delete(sid)
+        if self.sessions.active_id == sid:
+            self.current_session_msgs = []
+            self.hist.clear()
+
+    def list_sessions(self):
+        return self.sessions.list_all()
 
     def build_messages(self, user_input):
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         msgs = [{"role": "system", "content": self.agent.build_prompt(self.dna, ts)}]
-        msgs.extend(self.hist.get_context())
+        for m in self.current_session_msgs[-10:]:
+            msgs.append({"role": m["role"], "content": m["content"]})
         msgs.append({"role": "user", "content": user_input})
         return msgs
 
@@ -47,13 +73,22 @@ class Synapsis:
                 return
 
         clean, acts = self.agent.process(full)
-        self.hist.add("user", user_input)
-        self.hist.add("assistant", clean)
-        self.hist._save()
+        self.current_session_msgs.append({"role": "user", "content": user_input})
+        self.current_session_msgs.append({"role": "assistant", "content": clean})
+        if self.sessions.active_id:
+            self.sessions.save_messages(self.sessions.active_id, self.current_session_msgs)
 
         if acts:
             yield {"type": "actions", "data": acts}
         yield {"type": "done", "data": clean}
+
+    def edit_and_resend(self, index, new_text):
+        if 0 <= index < len(self.current_session_msgs):
+            self.current_session_msgs = self.current_session_msgs[:index]
+            if self.sessions.active_id:
+                self.sessions.save_messages(self.sessions.active_id, self.current_session_msgs)
+            return self.stream_chat(new_text)
+        return iter([{"type": "error", "data": "Invalid message index"}])
 
     def handle_command(self, cmd):
         cmd = cmd.strip()
@@ -72,6 +107,9 @@ class Synapsis:
         if cmd == "/clear":
             self.mem.clear()
             self.hist.clear()
+            self.current_session_msgs = []
+            if self.sessions.active_id:
+                self.sessions.save_messages(self.sessions.active_id, [])
             return "[OK] Cleared"
         if cmd.startswith("/ws "):
             parts = cmd.split()
