@@ -1,5 +1,4 @@
 import os
-import sys
 from setuptools import setup
 
 PKG_DIR = "synapse"
@@ -8,8 +7,7 @@ os.makedirs(PKG_DIR, exist_ok=True)
 with open(os.path.join(PKG_DIR, "__init__.py"), "w", encoding="utf-8") as f:
     f.write("# Synapse AI CLI\n")
 
-CLI_CODE = '''
-import os
+CLI_CODE = '''import os
 import sys
 import json
 from pathlib import Path
@@ -95,10 +93,9 @@ if __name__ == "__main__":
 '''
 
 with open(os.path.join(PKG_DIR, "cli.py"), "w", encoding="utf-8") as f:
-    f.write(CLI_CODE.strip() + "\n")
+    f.write(CLI_CODE)
 
-MAIN_CODE = '''
-import json
+MAIN_CODE = '''import json
 import sys
 import os
 import re
@@ -415,7 +412,7 @@ if __name__ == "__main__":
 '''
 
 with open(os.path.join(PKG_DIR, "main.py"), "w", encoding="utf-8") as f:
-    f.write(MAIN_CODE.strip() + "\n")
+    f.write(MAIN_CODE)
 
 setup(
     name="synapse-ai-cli",
