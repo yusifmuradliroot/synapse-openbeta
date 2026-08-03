@@ -61,6 +61,15 @@ def run_cli():
                     sys.stdout.flush()
                     content_text += cdata
 
+                elif ctype == "loop_status":
+                    if in_thinking:
+                        sys.stdout.write("\033[0m\n")
+                        in_thinking = False
+                    if in_content:
+                        sys.stdout.write("\n")
+                        in_content = False
+                    print("\033[33m[Loop] " + cdata + "\033[0m")
+
                 elif ctype == "actions":
                     if in_content:
                         sys.stdout.write("\n")
