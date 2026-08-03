@@ -5,7 +5,7 @@ PKG = "synapse"
 CORE = os.path.join(PKG, "core")
 os.makedirs(CORE, exist_ok=True)
 
-VERSION = "2.1.0"
+VERSION = "2.2.0"
 
 with open(os.path.join(PKG, "__init__.py"), "w", encoding="utf-8") as f:
     f.write(f'__version__ = "{VERSION}"\n')
@@ -51,19 +51,19 @@ def save_json(path, data):
 
 def init_config():
     ensure_dirs()
-    if not CONFIG_PATH.exists(): save_json(CONFIG_PATH, {"default_provider": "nvidia", "providers": PROVIDERS})
+    if not CONFIG_PATH.exists(): save_json(CONFIG_PATH, {"default_provider": "nvidia", "providers": PROVIDERS, "default_interface": "cli"})
     if not DNA_PATH.exists(): save_json(DNA_PATH, DEFAULT_DNA)
     if not MEMORY_PATH.exists(): save_json(MEMORY_PATH, {"memories": [], "total_chars": 0})
     if not HISTORY_PATH.exists(): save_json(HISTORY_PATH, {"compressed_3": "", "ultra_10": "", "recent": [], "total_chars": 0})
 
 def setup_wizard():
-    cfg = load_json(CONFIG_PATH, {"default_provider": "nvidia", "providers": PROVIDERS})
-    if cfg is None: cfg = {"default_provider": "nvidia", "providers": PROVIDERS}
+    cfg = load_json(CONFIG_PATH, {"default_provider": "nvidia", "providers": PROVIDERS, "default_interface": "cli"})
+    if cfg is None: cfg = {"default_provider": "nvidia", "providers": PROVIDERS, "default_interface": "cli"}
     providers = cfg.get("providers", {})
     needs = any("YOUR_" in providers.get(p, {}).get("api_key", "") for p in PROVIDERS)
     if not needs: return cfg
 
-    print("\\033[1;36m\\n  SYNAPSE v2.1.0 - Setup\\033[0m")
+    print("\\033[1;36m\\n  SYNAPSE v2.2.0 - Setup\\033[0m")
     print("  Configure providers. Enter to skip.\\n")
     for name in ["nvidia", "openrouter", "cohere"]:
         cur = providers.get(name, {})
@@ -79,6 +79,10 @@ def setup_wizard():
     ok = [p for p in PROVIDERS if "YOUR_" not in providers.get(p, {}).get("api_key", "")]
     cfg["default_provider"] = ok[0] if ok else "nvidia"
     cfg["providers"] = providers
+    
+    iface = input("  Default Interface [cli/gui]: ").strip().lower()
+    cfg["default_interface"] = iface if iface in ("cli", "gui") else "cli"
+    
     save_json(CONFIG_PATH, cfg)
     print("\\033[32m  [✓] Saved to ~/synapse/config.json\\033[0m\\n")
     return cfg
@@ -101,13 +105,12 @@ class Engine:
         if not p.get("api_key") or "YOUR_" in p.get("api_key", ""): return False
         self.provider_name, self.api_key, self.model, self.api_url = name, p["api_key"], p["model"], p["api_url"]
         self.provider_type = "cohere" if "cohere" in self.api_url.lower() else "openai"
-        self.headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json", "User-Agent": "Synapse/2.1"}
+        self.headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json", "User-Agent": "Synapse/2.2"}
         return True
 
     def est_tok(self, t): return max(0, len(t.encode("utf-8")) // 4)
 
     def stream(self, messages):
-        last = messages[-1].get("content", "") if messages else ""
         self.ctx_in = self.est_tok(json.dumps(messages))
         self.ctx_out = 0
         self.tokens_exact = False
@@ -163,9 +166,7 @@ class MemoryManager:
         return False
 
     def get_all(self): return self.memories
-
     def needs_optimization(self): return self.total_chars > OPTIMIZE_AT
-
     def optimize(self, ai_list):
         self.memories = [m.strip() for m in ai_list if m.strip()]
         self.total_chars = sum(len(m) for m in self.memories)
@@ -173,15 +174,12 @@ class MemoryManager:
             self.memories = self.memories[-15:]
             self.total_chars = sum(len(m) for m in self.memories)
         self._save()
-
     def build_prompt(self):
         txt = "\\n".join(f"- {m}" for m in self.memories)
         return f"Condense these memories. Remove duplicates. Keep all facts. Output ONLY a JSON array of strings. Max 2048 chars total.\\n\\n{txt}"
-
     def _save(self):
         self.data = {"memories": self.memories, "total_chars": self.total_chars}
         save_json(MEMORY_PATH, self.data)
-
     def clear(self):
         self.memories, self.total_chars = [], 0
         self._save()
@@ -222,22 +220,18 @@ class HistoryManager:
         return ctx
 
     def needs_optimization(self): return len(self.recent) >= 8 or self.total_chars > 700
-
-    def optimize(self, ai_compressed_3, ai_ultra_10):
-        self.compressed_3 = ai_compressed_3[:400]
-        self.ultra_10 = ai_ultra_10[:400]
+    def optimize(self, ai_c3, ai_u10):
+        self.compressed_3 = ai_c3[:400]
+        self.ultra_10 = ai_u10[:400]
         self.recent = self.recent[-3:]
         self.total_chars = len(self.compressed_3) + len(self.ultra_10) + sum(len(m.get("content","")) for m in self.recent)
         self._save()
-
     def build_prompt(self):
         txt = "\\n".join(f"{m['role']}: {m['content'][:100]}" for m in self.recent[-10:])
         return f"Compress this chat history.\\n1. Last 3 messages -> detailed summary (max 400 chars).\\n2. Older messages -> ultra-brief 1-line summaries (max 400 chars).\\nOutput ONLY two JSON strings: [\\"compressed_3\\", \\"ultra_10\\"]\\n\\n{txt}"
-
     def _save(self):
         self.data = {"compressed_3": self.compressed_3, "ultra_10": self.ultra_10, "recent": self.recent, "total_chars": self.total_chars}
         save_json(HISTORY_PATH, self.data)
-
     def clear(self):
         self.compressed_3 = self.ultra_10 = ""
         self.recent = []
@@ -254,10 +248,8 @@ class Workspace:
     def __init__(self):
         self.active = "default"
         self.base = WS_DIR
-
     @property
     def path(self): return self.base / self.active
-
     def create(self, n): (self.base / n).mkdir(parents=True, exist_ok=True)
     def switch(self, n):
         p = self.base / n
@@ -297,11 +289,9 @@ class AgentController:
     def __init__(self, engine, ws, mem, hist):
         self.engine, self.ws, self.mem, self.hist = engine, ws, mem, hist
         self.mode = MODE_CHAT
-
     def set_mode(self, m):
         if m in (MODE_CHAT, MODE_NATIVE, MODE_CRACK): self.mode = m; return True
         return False
-
     def build_prompt(self, dna, time_str):
         p = [f"TIME: {time_str}", "RULES: Direct answers only. No filler. Use markdown. Be concise."]
         p.append(f"WS: {self.ws.active} | Files: {', '.join(self.ws.list_files()) or 'Empty'}")
@@ -312,7 +302,6 @@ class AgentController:
         ms = self.mem.get_all()
         if ms: p.append("MEMORIES:\\n" + "\\n".join(f"- {m}" for m in ms[-10:]))
         return "\\n".join(p)
-
     def process(self, content):
         acts = []
         for f, c in re.findall(r'<\\{ws_write\\(([^)]+)\\)\\}>(.*?)<\\{/ws_write\\}>', content, re.DOTALL):
@@ -331,90 +320,34 @@ class AgentController:
         clean = re.sub(r'<\\{ws_list\\}>', '', clean)
         clean = re.sub(r'<\\{mem\\}>.*?<\\{mem\\}>', '', clean, flags=re.DOTALL).strip()
         return clean, acts
-
     def should_loop(self): return self.mode in (MODE_NATIVE, MODE_CRACK)
 '''
 with open(os.path.join(CORE, "agents.py"), "w", encoding="utf-8") as f: f.write(AGENTS_CODE)
 
-CLI_CODE = '''import os, sys, json, tempfile, zipfile, urllib.request, subprocess, shutil
-from pathlib import Path
+CLI_CODE = '''import os, sys
 from datetime import datetime
+from synapse.core.config import init_config, setup_wizard, load_json, save_json, CONFIG_PATH, DNA_PATH
+from synapse.core.engine import Engine
+from synapse.core.memory import MemoryManager
+from synapse.core.history import HistoryManager
+from synapse.core.workspace import Workspace
+from synapse.core.agents import AgentController, MODE_CHAT, MODE_NATIVE, MODE_CRACK
 
-VERSION = "2.1.0"
-NOTES = "v2.1.0 Production Ready\\n- History: 3 compressed, 10 ultra, max 1024 chars\\n- Memory: max 2048 chars, optimize at 256\\n- CLI: Minimal, last msg only, small-model optimized\\n- Core: Modular, strict limits, stable streaming"
-
-def banner():
-    os.system('')
-    print("\\033[1;36m  SYNAPSE v2.1.0\\033[0m")
-    print("  \\033[90mProduction CLI | Modular Core\\033[0m\\n")
-
-def do_update():
-    from synapse.core.config import load_json, CONFIG_PATH
-    cfg = load_json(CONFIG_PATH, {})
-    old = cfg.get("_version", "prev")
-    print(f"\\033[33m[*] Updating: {old} → v{VERSION}...\\033[0m")
-    url = "https://github.com/yusifmuradliroot/synapse-openbeta/archive/refs/heads/main.zip"
-    try:
-        with tempfile.TemporaryDirectory() as td:
-            zp = os.path.join(td, "r.zip")
-            urllib.request.urlretrieve(url, zp)
-            with zipfile.ZipFile(zp, 'r') as z: z.extractall(td)
-            ds = [d for d in os.listdir(td) if os.path.isdir(os.path.join(td, d))]
-            if not ds: print("\\033[31m[!] Extract fail\\033[0m"); return False
-            res = subprocess.run([sys.executable, "-m", "pip", "install", "--user", "--force-reinstall", "-q", os.path.join(td, ds[0])], capture_output=True, text=True)
-            if res.returncode == 0: print(f"\\033[32m[✓] {old} → v{VERSION}\\033[0m\\nRun 'synapse'"); return True
-            print(f"\\033[31m[!] Fail: {res.stderr.strip()}\\033[0m"); return False
-    except Exception as e: print(f"\\033[31m[!] {e}\\033[0m"); return False
-
-def do_reset():
-    if input("\\033[31m[!] Delete all data? Type RESET: \\033[0m").strip() == "RESET":
-        p = Path.home() / "synapse"
-        if p.exists(): shutil.rmtree(p)
-        print("\\033[32m[✓] Reset. Run 'synapse'\\033[0m")
-    else: print("\\033[33m[~] Cancelled\\033[0m")
-
-def help_txt():
-    print(f"""\\033[1mSYNAPSE v{VERSION} Help\\033[0m
-  synapse              Start CLI
-  synapse --update     Update (shows version transition)
-  synapse --ver        Version info
-  synapse --updatenotes Update notes
-  synapse --reset      Reset data
-  synapse --help       This help
-  /chat /nativeagent /crackagent  Modes
-  /memory /clear /ws ...          Chat commands""")
-
-def run():
-    if "--update" in sys.argv: do_update(); sys.exit(0)
-    if "--ver" in sys.argv: print(f"Synapse v{VERSION}"); sys.exit(0)
-    if "--updatenotes" in sys.argv: print(NOTES); sys.exit(0)
-    if "--reset" in sys.argv: do_reset(); sys.exit(0)
-    if "--help" in sys.argv or "-h" in sys.argv: help_txt(); sys.exit(0)
-
-    from synapse.core.config import init_config, setup_wizard, load_json, save_json, CONFIG_PATH, DNA_PATH
-    from synapse.core.engine import Engine
-    from synapse.core.memory import MemoryManager
-    from synapse.core.history import HistoryManager
-    from synapse.core.workspace import Workspace
-    from synapse.core.agents import AgentController, MODE_CHAT, MODE_NATIVE, MODE_CRACK
-
+def run_cli():
     init_config()
     cfg = setup_wizard()
-    cfg["_version"] = VERSION
     save_json(CONFIG_PATH, cfg)
-
     eng = Engine()
     prov = cfg.get("default_provider", "nvidia")
     if not eng.apply(prov, cfg.get("providers", {})):
         print(f"\\033[31m[!] Provider '{prov}' invalid. Edit ~/synapse/config.json\\033[0m"); sys.exit(1)
-
     mem, hist, ws = MemoryManager(), HistoryManager(), Workspace()
     agent = AgentController(eng, ws, mem, hist)
     dna = load_json(DNA_PATH, {"core_directives": [], "response_rules": []})
-
-    banner()
+    
+    os.system('')
+    print("\\033[1;36m  SYNAPSE v2.2.0 CLI\\033[0m")
     print(f"  \\033[90m{eng.provider_name.upper()} | {eng.model} | {agent.mode}\\033[0m\\n")
-
     last_resp = ""
     try:
         while True:
@@ -445,57 +378,246 @@ def run():
                 else: print("\\033[31m[!] Unknown\\033[0m")
                 continue
             if not ui: continue
-
             ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             msgs = [{"role": "system", "content": agent.build_prompt(dna, ts)}]
             msgs.extend(hist.get_context())
             msgs.append({"role": "user", "content": ui})
-
-            cur_r = cur_c = ""
+            cur_c = ""
             err = False
             print("\\033[90m[Thinking...]\\033[0m", end="", flush=True)
             for ev, data in eng.stream(msgs):
                 if ev == "error": cur_c = data; err = True; break
-                elif ev == "reasoning": cur_r += data
                 elif ev == "content": cur_c += data; print(f"\\r\\033[90m[Gen {len(cur_c)}c]\\033[0m", end="", flush=True)
             print()
             eng.sess_in += eng.ctx_in; eng.sess_out += eng.ctx_out
-
             clean, acts = agent.process(cur_c)
             hist.add("user", ui); hist.add("assistant", clean)
             last_resp = clean
-
             if acts:
                 for a in acts: print(f"  \\033[36m{a}\\033[0m")
                 if agent.should_loop():
                     msgs.append({"role": "assistant", "content": cur_c})
                     msgs.append({"role": "user", "content": "\\n".join(acts)+"\\nContinue."})
                     print("\\033[33m[Loop...]\\033[0m"); continue
-
-            if hist.needs_optimization():
-                print("\\033[33m[Optimizing history...]\\033[0m")
-                # In production, trigger async or next-turn optimization. Simplified here.
-            if mem.needs_optimization():
-                print("\\033[33m[Memory optimize queued]\\033[0m")
-
             hist._save()
-            pfx = "" if eng.tokens_exact else "~"
-            print(f"\\033[90m[Tokens] In:{pfx}{eng.ctx_in} Out:{pfx}{eng.ctx_out}\\033[0m")
             if last_resp: print(f"\\n\\033[1mAssistant:\\033[0m\\n{last_resp}\\n")
     except KeyboardInterrupt: hist._save(); print("\\n\\033[33mSaved.\\033[0m")
-
-if __name__ == "__main__": run()
 '''
 with open(os.path.join(PKG, "cli.py"), "w", encoding="utf-8") as f: f.write(CLI_CODE)
 
-with open(os.path.join(PKG, "gui.py"), "w", encoding="utf-8") as f: f.write("# GUI placeholder for v2.x\n")
-with open(os.path.join(PKG, "main.py"), "w", encoding="utf-8") as f: f.write("from synapse.cli import run\nif __name__ == '__main__': run()\n")
+GUI_CODE = '''import os, sys, json, threading, webbrowser
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from datetime import datetime
+from synapse.core.config import init_config, setup_wizard, load_json, save_json, CONFIG_PATH, DNA_PATH
+from synapse.core.engine import Engine
+from synapse.core.memory import MemoryManager
+from synapse.core.history import HistoryManager
+from synapse.core.workspace import Workspace
+from synapse.core.agents import AgentController
+
+HTML_PAGE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Synapse v2.2.0</title>
+<style>
+:root{--bg:#0d1117;--fg:#c9d1d9;--acc:#58a6ff;--msg-u:#161b22;--msg-a:#1f2937;--bdr:#30363d}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,sans-serif;height:100vh;display:flex;flex-direction:column}
+header{padding:12px 16px;border-bottom:1px solid var(--bdr);display:flex;justify-content:space-between;align-items:center;background:#010409}
+h1{font-size:16px;color:var(--acc)}
+#status{font-size:12px;color:#8b949e}
+#chat{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:10px}
+.msg{max-width:85%;padding:10px 14px;border-radius:12px;line-height:1.5;font-size:14px;white-space:pre-wrap;word-break:break-word}
+.user{align-self:flex-end;background:var(--msg-u);border:1px solid var(--bdr)}
+.ai{align-self:flex-start;background:var(--msg-a);border:1px solid var(--bdr)}
+#input-area{padding:12px;border-top:1px solid var(--bdr);display:flex;gap:8px;background:#010409}
+#inp{flex:1;background:var(--msg-u);border:1px solid var(--bdr);color:var(--fg);padding:10px;border-radius:8px;outline:none;font-size:14px}
+#send{background:var(--acc);color:#fff;border:none;padding:0 16px;border-radius:8px;cursor:pointer;font-weight:600}
+#send:disabled{opacity:0.5;cursor:default}
+code{background:#000;padding:2px 4px;border-radius:4px;font-family:monospace}
+</style>
+</head>
+<body>
+<header><h1>SYNAPSE v2.2.0</h1><span id="status">Ready</span></header>
+<div id="chat"></div>
+<div id="input-area"><input id="inp" placeholder="Type a message..." autocomplete="off"><button id="send">Send</button></div>
+<script>
+const chat=document.getElementById('chat'),inp=document.getElementById('inp'),btn=document.getElementById('send'),st=document.getElementById('status');
+let curMsg=null;
+function addMsg(role,text){const d=document.createElement('div');d.className=`msg ${role}`;d.textContent=text;chat.appendChild(d);chat.scrollTop=chat.scrollHeight;return d;}
+async function send(){
+  const txt=inp.value.trim(); if(!txt)return;
+  inp.value=''; btn.disabled=true; st.textContent='Thinking...';
+  addMsg('user',txt);
+  curMsg=addMsg('ai','');
+  try{
+    const res=await fetch('/api/stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:txt})});
+    const reader=res.body.getReader(),dec=new TextDecoder();
+    let buf='';
+    while(true){
+      const{done,value}=await reader.read(); if(done)break;
+      buf+=dec.decode(value,{stream:true});
+      const lines=buf.split('\\n'); buf=lines.pop();
+      for(const line of lines){
+        if(line.startsWith('data: ')){
+          const d=line.slice(6);
+          if(d==='[DONE]'){st.textContent='Ready';btn.disabled=false;return;}
+          try{const p=JSON.parse(d); if(p.content){curMsg.textContent+=p.content;chat.scrollTop=chat.scrollHeight;}}catch(e){}
+        }
+      }
+    }
+  }catch(e){curMsg.textContent='[Error] '+e.message;st.textContent='Error';btn.disabled=false;}
+}
+btn.onclick=send; inp.onkeydown=e=>{if(e.key==='Enter')send()};
+</script>
+</body>
+</html>"""
+
+class Handler(BaseHTTPRequestHandler):
+    engine = None
+    agent = None
+    hist = None
+    mem = None
+    ws = None
+    dna = None
+    cfg = None
+
+    def log_message(self, format, *args): pass
+
+    def do_GET(self):
+        if self.path == '/':
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/html; charset=utf-8')
+            self.end_headers()
+            self.wfile.write(HTML_PAGE.encode())
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def do_POST(self):
+        if self.path == '/api/stream':
+            length = int(self.headers.get('Content-Length', 0))
+            body = json.loads(self.rfile.read(length))
+            user_msg = body.get('message', '')
+            
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/event-stream')
+            self.send_header('Cache-Control', 'no-cache')
+            self.end_headers()
+            
+            ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            msgs = [{"role": "system", "content": self.agent.build_prompt(self.dna, ts)}]
+            msgs.extend(self.hist.get_context())
+            msgs.append({"role": "user", "content": user_msg})
+            
+            full_resp = ""
+            try:
+                for ev, data in self.engine.stream(msgs):
+                    if ev == "content":
+                        full_resp += data
+                        chunk = json.dumps({"content": data})
+                        self.wfile.write(f"data: {chunk}\\n\\n".encode())
+                        self.wfile.flush()
+                    elif ev == "error":
+                        err_chunk = json.dumps({"content": f"[Error] {data}"})
+                        self.wfile.write(f"data: {err_chunk}\\n\\n".encode())
+                        self.wfile.flush()
+                        break
+                self.wfile.write(b"data: [DONE]\\n\\n")
+                self.wfile.flush()
+                
+                clean, acts = self.agent.process(full_resp)
+                self.hist.add("user", user_msg)
+                self.hist.add("assistant", clean)
+                self.hist._save()
+            except Exception as e:
+                self.wfile.write(f"data: {json.dumps({'content': f'[Server Error] {str(e)}'})}\\n\\n".encode())
+                self.wfile.flush()
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+def run_gui():
+    init_config()
+    cfg = setup_wizard()
+    save_json(CONFIG_PATH, cfg)
+    
+    eng = Engine()
+    prov = cfg.get("default_provider", "nvidia")
+    if not eng.apply(prov, cfg.get("providers", {})):
+        print(f"[!] Provider '{prov}' invalid. Edit ~/synapse/config.json"); sys.exit(1)
+        
+    Handler.engine = eng
+    Handler.mem = MemoryManager()
+    Handler.hist = HistoryManager()
+    Handler.ws = Workspace()
+    Handler.agent = AgentController(eng, Handler.ws, Handler.mem, Handler.hist)
+    Handler.dna = load_json(DNA_PATH, {"core_directives": [], "response_rules": []})
+    Handler.cfg = cfg
+    
+    port = 8080
+    server = HTTPServer(('127.0.0.1', port), Handler)
+    url = f"http://127.0.0.1:{port}"
+    print(f"\\033[1;36m  SYNAPSE v2.2.0 GUI\\033[0m")
+    print(f"  \\033[32mServer running at {url}\\033[0m")
+    print("  Opening browser... (Press Ctrl+C to stop)")
+    webbrowser.open(url)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        server.server_close()
+        print("\\n[✓] Server stopped.")
+'''
+with open(os.path.join(PKG, "gui.py"), "w", encoding="utf-8") as f: f.write(GUI_CODE)
+
+MAIN_CODE = '''import sys
+from synapse.core.config import load_json, CONFIG_PATH, init_config, save_json
+
+def main():
+    args = sys.argv[1:]
+    init_config()
+    cfg = load_json(CONFIG_PATH, {})
+    
+    if "--defaultinterface" in args:
+        idx = args.index("--defaultinterface")
+        if idx + 1 < len(args):
+            mode = args[idx+1].lower().lstrip("-")
+            if mode in ("cli", "gui"):
+                cfg["default_interface"] = mode
+                save_json(CONFIG_PATH, cfg)
+                print(f"[✓] Default interface set to {mode.upper()}")
+            else:
+                print("[!] Use --cli or --gui")
+        else:
+            print("[!] Specify --cli or --gui after --defaultinterface")
+        sys.exit(0)
+        
+    if "--cli" in args:
+        from synapse.cli import run_cli
+        run_cli()
+    elif "--gui" in args:
+        from synapse.gui import run_gui
+        run_gui()
+    else:
+        default = cfg.get("default_interface", "cli")
+        if default == "gui":
+            from synapse.gui import run_gui
+            run_gui()
+        else:
+            from synapse.cli import run_cli
+            run_cli()
+
+if __name__ == "__main__":
+    main()
+'''
+with open(os.path.join(PKG, "main.py"), "w", encoding="utf-8") as f: f.write(MAIN_CODE)
 
 setup(
     name="synapse-ai-cli",
     version=VERSION,
-    description="Synapse AI CLI v2.1.0 - Production Ready",
+    description="Synapse AI v2.2.0 - CLI & Web GUI (Termux Compatible)",
     packages=find_packages(),
     python_requires=">=3.8",
-    entry_points={"console_scripts": ["synapse=synapse.cli:run"]}
+    entry_points={"console_scripts": ["synapse=synapse.main:main"]}
 )
