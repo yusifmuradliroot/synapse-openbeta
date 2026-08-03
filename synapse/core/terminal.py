@@ -8,7 +8,7 @@ class TerminalExecutor:
     def __init__(self):
         self.cwd = os.path.expanduser("~")
 
-    def execute(self, command):
+    def execute(self, command, timeout=None):
         try:
             command = command.strip()
             if not command:
@@ -18,23 +18,28 @@ class TerminalExecutor:
                 new_path = os.path.expanduser(target)
                 if os.path.isdir(new_path):
                     self.cwd = new_path
-                    return {"ok": True, "output": "[OK] Changed to " + new_path}
-                return {"ok": False, "output": "[Error] Directory not found: " + target}
-            result = subprocess.run(
-                command, shell=True, capture_output=True, text=True,
-                timeout=MAX_TIMEOUT, cwd=self.cwd
-            )
+                    return {"ok": True, "output": "[OK] " + new_path}
+                return {"ok": False, "output": "[Error] Not found: " + target}
+            t = timeout or MAX_TIMEOUT
+            result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=t, cwd=self.cwd)
             output = ""
             if result.stdout:
                 output += result.stdout
             if result.stderr:
                 output += ("\n[STDERR]\n" + result.stderr) if output else result.stderr
             if not output.strip():
-                output = "[OK] Command completed (no output)"
+                output = "[OK] (no output)"
             if len(output) > MAX_OUTPUT:
                 output = output[:MAX_OUTPUT] + "\n...[truncated]"
             return {"ok": result.returncode == 0, "output": output}
         except subprocess.TimeoutExpired:
-            return {"ok": False, "output": "[Error] Command timed out (" + str(MAX_TIMEOUT) + "s)"}
+            return {"ok": False, "output": f"[Error] Timeout ({timeout or MAX_TIMEOUT}s)"}
         except Exception as e:
             return {"ok": False, "output": "[Error] " + str(e)}
+
+    def get_tree(self, max_depth=2):
+        try:
+            result = subprocess.run(f"find . -maxdepth {max_depth} -type f | head -50", shell=True, capture_output=True, text=True, timeout=5, cwd=self.cwd)
+            return result.stdout.strip() or "[Empty]"
+        except Exception:
+            return "[Error]"
