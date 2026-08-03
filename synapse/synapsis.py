@@ -8,6 +8,8 @@ from synapse.core.workspace import Workspace
 from synapse.core.agents import AgentController
 from synapse.core.sessions import SessionManager
 
+MAX_LOOPS = 10
+
 class Synapsis:
     def __init__(self):
         init_config()
@@ -102,15 +104,12 @@ class Synapsis:
     def get_code_context(self):
         return self.code_context
 
-    def build_messages(self, user_input):
+    def _build_system_block(self):
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         parts = []
-
         if self.custom_system_prompt:
             parts.append(self.custom_system_prompt)
-
         parts.append(self.agent.build_prompt(self.dna, ts))
-
         if self.pinned_files:
             pinned_content = "PINNED FILES (always in context):\n"
             for fname in self.pinned_files:
@@ -118,19 +117,20 @@ class Synapsis:
                 if content:
                     pinned_content += "\n--- " + fname + " ---\n" + content + "\n"
             parts.append(pinned_content)
-
         if self.code_context:
             code_ctx = "AI-GENERATED CODE FILES (current versions in context):\n"
             for fname, content in self.code_context.items():
                 code_ctx += "\n--- " + fname + " ---\n" + content + "\n"
             parts.append(code_ctx)
+        return "\n\n".join(parts)
 
-        system_content = "\n\n".join(parts)
+    def _build_loop_messages(self, loop_context, current_prompt):
+        system_content = self._build_system_block()
         msgs = [{"role": "system", "content": system_content}]
-
         for m in self.current_session_msgs[-10:]:
             msgs.append({"role": m["role"], "content": m["content"]})
-        msgs.append({"role": "user", "content": user_input})
+        msgs.extend(loop_context)
+        msgs.append({"role": "user", "content": current_prompt})
         return msgs
 
     def _update_code_context(self, full_response):
@@ -141,28 +141,52 @@ class Synapsis:
             self.sessions.save_code_context(self.sessions.active_id, self.code_context)
 
     def stream_chat(self, user_input):
-        msgs = self.build_messages(user_input)
-        full = ""
-        for ev, data in self.engine.stream(msgs):
-            if ev == "content":
-                full += data
-                yield {"type": "content", "data": data}
-            elif ev == "reasoning":
-                yield {"type": "reasoning", "data": data}
-            elif ev == "error":
-                yield {"type": "error", "data": data}
-                return
+        original_input = user_input
+        current_prompt = user_input
+        loop_context = []
+        loop_count = 0
 
-        self._update_code_context(full)
-        clean, acts = self.agent.process(full)
-        self.current_session_msgs.append({"role": "user", "content": user_input})
-        self.current_session_msgs.append({"role": "assistant", "content": clean})
-        if self.sessions.active_id:
-            self.sessions.save_messages(self.sessions.active_id, self.current_session_msgs)
+        while loop_count <= MAX_LOOPS:
+            msgs = self._build_loop_messages(loop_context, current_prompt)
+            full = ""
 
-        if acts:
-            yield {"type": "actions", "data": acts}
-        yield {"type": "done", "data": clean}
+            for ev, data in self.engine.stream(msgs):
+                if ev == "content":
+                    full += data
+                    yield {"type": "content", "data": data}
+                elif ev == "reasoning":
+                    yield {"type": "reasoning", "data": data}
+                elif ev == "error":
+                    yield {"type": "error", "data": data}
+                    return
+
+            if "<{uncompleted}>" in full:
+                loop_count += 1
+                if loop_count > MAX_LOOPS:
+                    yield {"type": "error", "data": "Max auto-resume limit reached (" + str(MAX_LOOPS) + ")."}
+                    break
+
+                clean_resp = full.replace("<{uncompleted}>", "").strip()
+                self._update_code_context(full)
+                yield {"type": "loop_status", "data": "Auto-resuming (" + str(loop_count) + "/" + str(MAX_LOOPS) + ")..."}
+
+                loop_context.append({"role": "assistant", "content": clean_resp})
+                loop_context.append({"role": "user", "content": "<{resume}>"})
+                current_prompt = "<{resume}>"
+                continue
+            else:
+                clean, acts = self.agent.process(full)
+                self._update_code_context(full)
+                
+                self.current_session_msgs.append({"role": "user", "content": original_input})
+                self.current_session_msgs.append({"role": "assistant", "content": clean})
+                if self.sessions.active_id:
+                    self.sessions.save_messages(self.sessions.active_id, self.current_session_msgs)
+
+                if acts:
+                    yield {"type": "actions", "data": acts}
+                yield {"type": "done", "data": clean}
+                break
 
     def edit_and_resend(self, index, new_text):
         if 0 <= index < len(self.current_session_msgs):
