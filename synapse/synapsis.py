@@ -1,6 +1,6 @@
 import re
 from datetime import datetime
-from synapse.core.config import init_config, load_json, save_json, CONFIG_PATH, DNA_PATH
+from synapse.core.config import init_config, load_json, save_json, load_context, save_context, CONTEXT_PATH, DNA_PATH
 from synapse.core.engine import Engine
 from synapse.core.memory import MemoryManager
 from synapse.core.history import HistoryManager
@@ -9,12 +9,10 @@ from synapse.core.agents import AgentController, MODE_CHAT, MODE_CODE, MODE_AGEN
 from synapse.core.sessions import SessionManager
 from synapse.core.terminal import TerminalExecutor
 
-MAX_LOOPS = 25
-
 class Synapsis:
     def __init__(self):
         init_config()
-        self.cfg = load_json(CONFIG_PATH, {})
+        self.ctx = load_context()
         self.dna = load_json(DNA_PATH, {"core_directives": [], "response_rules": []})
         self.engine = Engine()
         self.mem = MemoryManager()
@@ -28,12 +26,14 @@ class Synapsis:
         self.pinned_files = []
         self.custom_system_prompt = ""
         self.active_session_id = None
-        prov = self.cfg.get("default_provider", "nvidia")
-        if not self.engine.apply(prov, self.cfg.get("providers", {})):
+        prov = self.ctx.get("active_provider", "nvidia")
+        if not self.engine.apply(prov, self.ctx.get("providers", {})):
             raise ValueError("Provider '" + prov + "' not configured.")
         if not self.sessions.list_all():
             self.sessions.create("Default Session")
         self._load_active_session()
+        mode = self.agent.mode
+        self.agent.set_mode(mode, self.ctx.get("modes", {}).get(mode, {}))
 
     def _load_active_session(self):
         if self.sessions.active_id:
@@ -49,18 +49,29 @@ class Synapsis:
         data = self.sessions.load(sid) if sid else None
         if not data:
             return [], {}, [], ""
-        return (
-            list(data.get("messages", [])),
-            dict(data.get("code_context", {})),
-            list(data.get("pinned_files", [])),
-            data.get("system_prompt", "")
-        )
+        return list(data.get("messages", [])), dict(data.get("code_context", {})), list(data.get("pinned_files", [])), data.get("system_prompt", "")
+
+    def get_context(self):
+        return self.ctx
+
+    def update_context(self, key, value):
+        keys = key.split(".")
+        d = self.ctx
+        for k in keys[:-1]:
+            d = d.setdefault(k, {})
+        d[keys[-1]] = value
+        save_context(self.ctx)
 
     def switch_provider(self, name):
-        return self.engine.apply(name, self.cfg.get("providers", {}))
+        if self.engine.apply(name, self.ctx.get("providers", {})):
+            self.ctx["active_provider"] = name
+            save_context(self.ctx)
+            return True
+        return False
 
     def set_mode(self, mode):
-        return self.agent.set_mode(mode)
+        params = self.ctx.get("modes", {}).get(mode, {})
+        return self.agent.set_mode(mode, params)
 
     def get_mode(self):
         return self.agent.mode
@@ -122,40 +133,46 @@ class Synapsis:
         parts = []
         if sys_prompt:
             parts.append(sys_prompt)
-        parts.append(self.agent.build_prompt(self.dna, ts))
+        mode_hint = self.ctx.get("modes", {}).get(self.agent.mode, {}).get("system_hint", "")
+        parts.append(self.agent.build_prompt(self.dna, ts, mode_hint))
         if pinned:
             pc = "PINNED FILES:\n"
             for fname in pinned:
                 content = self.ws.read(fname)
                 if content:
-                    pc += "\n--- " + fname + " ---\n" + content + "\n"
+                    pc += f"\n--- {fname} ---\n{content}\n"
             parts.append(pc)
         if code_ctx:
+            max_files = self.ctx.get("context", {}).get("max_code_files", 10)
             cc = "AI-GENERATED CODE FILES:\n"
-            for fname, content in code_ctx.items():
-                cc += "\n--- " + fname + " ---\n" + content + "\n"
+            for i, (fname, content) in enumerate(code_ctx.items()):
+                if i >= max_files:
+                    break
+                cc += f"\n--- {fname} ---\n{content}\n"
             parts.append(cc)
         return "\n\n".join(parts)
 
     def _build_loop_messages(self, loop_context, current_prompt, session_msgs, code_ctx, pinned, sys_prompt):
         system_content = self._build_system_block(code_ctx, pinned, sys_prompt)
         msgs = [{"role": "system", "content": system_content}]
-        for m in session_msgs[-10:]:
+        max_msgs = self.ctx.get("context", {}).get("max_messages", 15)
+        for m in session_msgs[-max_msgs:]:
             msgs.append({"role": m["role"], "content": m["content"]})
         msgs.extend(loop_context)
         msgs.append({"role": "user", "content": current_prompt})
         return msgs
 
     def _extract_code_context(self, full_response, code_ctx):
-        writes = re.findall(r'<\{ws_write\(([^)]+)\)\}>(.*?)<\{/ws_write\}>', full_response, re.DOTALL)
-        for fname, content in writes:
-            code_ctx[fname] = content.strip()
+        for pattern in [r'<\{ws_write\(([^)]+)\)\}>(.*?)<\{/ws_write\}>', r'<\{ws_edit\(([^)]+)\)\}>(.*?)<\{/ws_edit\}>']:
+            for fname, content in re.findall(pattern, full_response, re.DOTALL):
+                code_ctx[fname] = content.strip()
 
     def _execute_commands(self, content):
         cmds = self.agent.extract_commands(content)
         results = []
+        timeout = self.ctx.get("agent", {}).get("max_cmd_timeout", 30)
         for cmd in cmds:
-            res = self.terminal.execute(cmd)
+            res = self.terminal.execute(cmd, timeout)
             results.append(f"[CMD] {cmd}\n{res['output']}")
         return results
 
@@ -169,12 +186,13 @@ class Synapsis:
         partial_content = ""
         saved = False
         mode = self.agent.mode
+        max_loops = self.ctx.get("agent", {}).get("max_loops", 25)
+        auto_verify = self.ctx.get("agent", {}).get("auto_verify", True)
 
         try:
-            while loop_count <= MAX_LOOPS:
+            while loop_count <= max_loops:
                 msgs = self._build_loop_messages(loop_context, current_prompt, session_msgs, code_ctx, pinned, sys_prompt)
                 full = ""
-
                 for ev, data in self.engine.stream(msgs):
                     if ev == "content":
                         full += data
@@ -193,26 +211,27 @@ class Synapsis:
 
                 has_uncompleted = "<{uncompleted}>" in full
                 has_actions = self.agent.has_actions(full) or len(cmd_results) > 0
-                should_loop = has_uncompleted or (has_actions and mode == MODE_AGENT)
+                has_errors = self.agent.has_errors_in_output(cmd_results) if auto_verify else False
+                should_loop = has_uncompleted or (has_actions and mode == MODE_AGENT) or (has_errors and mode == MODE_AGENT)
 
                 if should_loop:
                     loop_count += 1
-                    if loop_count > MAX_LOOPS:
+                    if loop_count > max_loops:
                         yield {"type": "error", "data": "Max loop limit reached."}
                         break
-
                     clean_resp = full.replace("<{uncompleted}>", "").strip()
                     self._extract_code_context(full, code_ctx)
                     if sid:
                         self.sessions.save_code_context(sid, code_ctx)
-
                     loop_context.append({"role": "assistant", "content": clean_resp})
-                    if cmd_results:
-                        loop_context.append({"role": "user", "content": "<{resume}> Command results:\n" + "\n".join(cmd_results) + "\nAnalyze results and continue."})
+                    if has_errors:
+                        loop_context.append({"role": "user", "content": "<{resume}> ERRORS DETECTED in command output. Analyze the errors above, fix the code, and re-verify.\n" + "\n".join(cmd_results)})
+                    elif cmd_results:
+                        loop_context.append({"role": "user", "content": "<{resume}> Command results:\n" + "\n".join(cmd_results) + "\nAnalyze and continue."})
                     else:
                         loop_context.append({"role": "user", "content": "<{resume}> Continue with the next step."})
                     current_prompt = loop_context[-1]["content"]
-                    yield {"type": "loop_status", "data": "Step " + str(loop_count) + "/" + str(MAX_LOOPS) + " - Continuing..."}
+                    yield {"type": "loop_status", "data": f"Step {loop_count}/{max_loops} - Continuing..."}
                     continue
                 else:
                     clean, acts = self.agent.process(full)
@@ -230,7 +249,6 @@ class Synapsis:
                         yield {"type": "actions", "data": acts}
                     yield {"type": "done", "data": clean}
                     break
-
         except GeneratorExit:
             pass
         finally:
@@ -266,7 +284,7 @@ class Synapsis:
             return "[OK] Agent mode"
         if cmd == "/memory":
             ms = self.mem.get_all()
-            return "\n".join(str(i) + ". " + m for i, m in enumerate(ms, 1)) if ms else "No memories."
+            return "\n".join(f"{i}. {m}" for i, m in enumerate(ms, 1)) if ms else "No memories."
         if cmd == "/clear":
             self.mem.clear()
             self.current_session_msgs = []
@@ -275,6 +293,8 @@ class Synapsis:
                 self.sessions.save_messages(self.active_session_id, [])
                 self.sessions.save_code_context(self.active_session_id, {})
             return "[OK] Cleared"
+        if cmd == "/tree":
+            return self.terminal.get_tree()
         if cmd.startswith("/ws "):
             parts = cmd.split()
             sub = parts[1].lower() if len(parts) > 1 else ""
@@ -289,6 +309,6 @@ class Synapsis:
                 return "[OK] Deleted" if self.ws.delete(parts[2]) else "[!] Invalid"
         if cmd.startswith("/"):
             p = cmd[1:].lower()
-            if p in self.cfg.get("providers", {}):
+            if p in self.ctx.get("providers", {}):
                 return "[OK] " + p.upper() if self.switch_provider(p) else "[!] Invalid key"
         return "[!] Unknown command"
