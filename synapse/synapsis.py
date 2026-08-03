@@ -20,11 +20,24 @@ class Synapsis:
         self.sessions = SessionManager()
         self.agent = AgentController(self.engine, self.ws, self.mem, self.hist)
         self.current_session_msgs = []
+        self.code_context = {}
+        self.pinned_files = []
+        self.custom_system_prompt = ""
         prov = self.cfg.get("default_provider", "nvidia")
         if not self.engine.apply(prov, self.cfg.get("providers", {})):
             raise ValueError("Provider '" + prov + "' not configured.")
         if not self.sessions.list_all():
             self.sessions.create("Default Session")
+        self._load_active_session()
+
+    def _load_active_session(self):
+        if self.sessions.active_id:
+            data = self.sessions.load(self.sessions.active_id)
+            if data:
+                self.current_session_msgs = data.get("messages", [])
+                self.code_context = data.get("code_context", {})
+                self.pinned_files = data.get("pinned_files", [])
+                self.custom_system_prompt = data.get("system_prompt", "")
 
     def switch_provider(self, name):
         return self.engine.apply(name, self.cfg.get("providers", {}))
@@ -32,32 +45,100 @@ class Synapsis:
     def new_session(self, title="New Chat"):
         sid = self.sessions.create(title)
         self.current_session_msgs = []
-        self.hist.clear()
+        self.code_context = {}
+        self.pinned_files = []
+        self.custom_system_prompt = ""
         return sid
 
     def load_session(self, sid):
         data = self.sessions.load(sid)
         if data:
             self.current_session_msgs = data.get("messages", [])
+            self.code_context = data.get("code_context", {})
+            self.pinned_files = data.get("pinned_files", [])
+            self.custom_system_prompt = data.get("system_prompt", "")
             return True
         return False
 
     def delete_session(self, sid):
         self.sessions.delete(sid)
-        if self.sessions.active_id == sid:
+        if self.sessions.active_id is None:
             self.current_session_msgs = []
-            self.hist.clear()
+            self.code_context = {}
+            self.pinned_files = []
+            self.custom_system_prompt = ""
+
+    def rename_session(self, sid, title):
+        self.sessions.rename(sid, title)
 
     def list_sessions(self):
         return self.sessions.list_all()
 
+    def set_system_prompt(self, prompt):
+        self.custom_system_prompt = prompt
+        if self.sessions.active_id:
+            self.sessions.save_system_prompt(self.sessions.active_id, prompt)
+
+    def set_pinned_files(self, files):
+        self.pinned_files = files
+        if self.sessions.active_id:
+            self.sessions.save_pinned_files(self.sessions.active_id, files)
+
+    def get_pinned_files(self):
+        return self.pinned_files
+
+    def add_pinned_file(self, fname):
+        if fname not in self.pinned_files:
+            self.pinned_files.append(fname)
+            if self.sessions.active_id:
+                self.sessions.save_pinned_files(self.sessions.active_id, self.pinned_files)
+
+    def remove_pinned_file(self, fname):
+        if fname in self.pinned_files:
+            self.pinned_files.remove(fname)
+            if self.sessions.active_id:
+                self.sessions.save_pinned_files(self.sessions.active_id, self.pinned_files)
+
+    def get_code_context(self):
+        return self.code_context
+
     def build_messages(self, user_input):
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        msgs = [{"role": "system", "content": self.agent.build_prompt(self.dna, ts)}]
+        parts = []
+
+        if self.custom_system_prompt:
+            parts.append(self.custom_system_prompt)
+
+        parts.append(self.agent.build_prompt(self.dna, ts))
+
+        if self.pinned_files:
+            pinned_content = "PINNED FILES (always in context):\n"
+            for fname in self.pinned_files:
+                content = self.ws.read(fname)
+                if content:
+                    pinned_content += "\n--- " + fname + " ---\n" + content + "\n"
+            parts.append(pinned_content)
+
+        if self.code_context:
+            code_ctx = "AI-GENERATED CODE FILES (current versions in context):\n"
+            for fname, content in self.code_context.items():
+                code_ctx += "\n--- " + fname + " ---\n" + content + "\n"
+            parts.append(code_ctx)
+
+        system_content = "\n\n".join(parts)
+        msgs = [{"role": "system", "content": system_content}]
+
         for m in self.current_session_msgs[-10:]:
             msgs.append({"role": m["role"], "content": m["content"]})
         msgs.append({"role": "user", "content": user_input})
         return msgs
+
+    def _update_code_context(self, full_response):
+        writes = re.findall(r'<\{ws_write\(([^)]+)\)\}>(.*?)<\{/ws_write\}>', full_response, re.DOTALL)
+        for fname, content in writes:
+            self.code_context[fname] = content.strip()
+        if self.sessions.active_id:
+            self.sessions.save_code_context(self.sessions.active_id, self.code_context)
 
     def stream_chat(self, user_input):
         msgs = self.build_messages(user_input)
@@ -72,6 +153,7 @@ class Synapsis:
                 yield {"type": "error", "data": data}
                 return
 
+        self._update_code_context(full)
         clean, acts = self.agent.process(full)
         self.current_session_msgs.append({"role": "user", "content": user_input})
         self.current_session_msgs.append({"role": "assistant", "content": clean})
@@ -108,8 +190,10 @@ class Synapsis:
             self.mem.clear()
             self.hist.clear()
             self.current_session_msgs = []
+            self.code_context = {}
             if self.sessions.active_id:
                 self.sessions.save_messages(self.sessions.active_id, [])
+                self.sessions.save_code_context(self.sessions.active_id, {})
             return "[OK] Cleared"
         if cmd.startswith("/ws "):
             parts = cmd.split()
