@@ -19,6 +19,7 @@ h1{font-size:15px;color:#58a6ff;font-weight:700}
 .msg{max-width:88%;padding:10px 14px;border-radius:12px;font-size:14px;white-space:pre-wrap;word-break:break-word;line-height:1.6}
 .user{align-self:flex-end;background:#161b22;border:1px solid #30363d}
 .ai{align-self:flex-start;background:#1f2937;border:1px solid #30363d}
+.thinking{align-self:flex-start;background:#1a1a2e;border:1px solid #4a4a6a;color:#8b8bab;font-size:12px;font-style:italic}
 .err{align-self:flex-start;background:#2d1117;border:1px solid #f85149;color:#f85149}
 #input-area{padding:10px 12px;border-top:1px solid #30363d;display:flex;gap:8px;background:#010409;flex-shrink:0}
 #inp{flex:1;background:#161b22;border:1px solid #30363d;color:#c9d1d9;padding:10px 12px;border-radius:10px;outline:none;font-size:15px}
@@ -48,7 +49,7 @@ var busy = false;
 function addMsg(role, text) {
   var d = document.createElement('div');
   d.className = 'msg ' + role;
-  d.textContent = text;
+  d.textContent = text || '';
   chat.appendChild(d);
   chat.scrollTop = chat.scrollHeight;
   return d;
@@ -66,42 +67,62 @@ function sendMsg() {
   inp.value = '';
   setBusy(true);
   addMsg('user', t);
-  var aiBox = addMsg('ai', '');
+
+  var thinkBox = null;
+  var aiBox = null;
 
   var xhr = new XMLHttpRequest();
   xhr.open('POST', '/api/chat', true);
   xhr.setRequestHeader('Content-Type', 'application/json');
+  xhr.responseType = 'text';
 
-  xhr.onprogress = function() {
-    var lines = xhr.responseText.split('\\n');
-    var txt = '';
-    for (var i = 0; i < lines.length; i++) {
-      var line = lines[i];
-      if (line.indexOf('data: ') === 0) {
+  var lastIndex = 0;
+
+  xhr.onreadystatechange = function() {
+    if (xhr.readyState === 3 || xhr.readyState === 4) {
+      var newData = xhr.responseText.substring(lastIndex);
+      lastIndex = xhr.responseText.length;
+
+      var lines = newData.split('\\n');
+      for (var i = 0; i < lines.length; i++) {
+        var line = lines[i];
+        if (line.indexOf('data: ') !== 0) continue;
         var payload = line.substring(6);
         if (payload === '[DONE]') continue;
         try {
           var obj = JSON.parse(payload);
-          if (obj.content) txt += obj.content;
+          if (obj.type === 'reasoning') {
+            if (!thinkBox) thinkBox = addMsg('thinking', '');
+            thinkBox.textContent += obj.content;
+            chat.scrollTop = chat.scrollHeight;
+          } else if (obj.type === 'content') {
+            if (!aiBox) aiBox = addMsg('ai', '');
+            aiBox.textContent += obj.content;
+            chat.scrollTop = chat.scrollHeight;
+          } else if (obj.type === 'error') {
+            if (!aiBox) aiBox = addMsg('err', '');
+            aiBox.textContent += obj.content;
+            chat.scrollTop = chat.scrollHeight;
+          } else if (obj.type === 'action') {
+            if (!aiBox) aiBox = addMsg('ai', '');
+            aiBox.textContent += obj.content + '\\n';
+            chat.scrollTop = chat.scrollHeight;
+          }
         } catch(e) {}
       }
     }
-    aiBox.textContent = txt;
-    chat.scrollTop = chat.scrollHeight;
-  };
 
-  xhr.onload = function() {
-    setBusy(false);
-    if (xhr.status !== 200) {
-      aiBox.className = 'msg err';
-      aiBox.textContent = '[HTTP Error] ' + xhr.status;
+    if (xhr.readyState === 4) {
+      setBusy(false);
+      if (xhr.status !== 200 && !aiBox) {
+        addMsg('err', '[HTTP Error] ' + xhr.status);
+      }
     }
   };
 
   xhr.onerror = function() {
     setBusy(false);
-    aiBox.className = 'msg err';
-    aiBox.textContent = '[Network Error] Connection failed.';
+    addMsg('err', '[Network Error] Connection failed.');
   };
 
   xhr.send(JSON.stringify({message: t}));
@@ -121,7 +142,7 @@ inp.addEventListener('keydown', function(e) {
 app = None
 
 class Handler(BaseHTTPRequestHandler):
-    protocol_version = "HTTP/1.1"
+    protocol_version = "HTTP/1.0"
 
     def log_message(self, format, *args):
         pass
@@ -161,9 +182,8 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         self.send_response(200)
-        self.send_header('Content-Type', 'text/event-stream')
+        self.send_header('Content-Type', 'text/plain; charset=utf-8')
         self.send_header('Cache-Control', 'no-cache')
-        self.send_header('X-Accel-Buffering', 'no')
         self.end_headers()
 
         try:
@@ -171,22 +191,26 @@ class Handler(BaseHTTPRequestHandler):
                 ctype = chunk.get("type", "")
                 cdata = chunk.get("data", "")
 
-                if ctype == "content":
-                    payload = json.dumps({"content": cdata})
-                    out = "data: " + payload + "\n\n"
-                    self.wfile.write(out.encode('utf-8'))
+                if ctype == "reasoning":
+                    payload = json.dumps({"type": "reasoning", "content": cdata})
+                    self.wfile.write(("data: " + payload + "\n\n").encode('utf-8'))
                     self.wfile.flush()
+
+                elif ctype == "content":
+                    payload = json.dumps({"type": "content", "content": cdata})
+                    self.wfile.write(("data: " + payload + "\n\n").encode('utf-8'))
+                    self.wfile.flush()
+
                 elif ctype == "error":
-                    payload = json.dumps({"content": "[Error] " + str(cdata)})
-                    out = "data: " + payload + "\n\n"
-                    self.wfile.write(out.encode('utf-8'))
+                    payload = json.dumps({"type": "error", "content": str(cdata)})
+                    self.wfile.write(("data: " + payload + "\n\n").encode('utf-8'))
                     self.wfile.flush()
+
                 elif ctype == "actions":
                     acts = cdata if isinstance(cdata, list) else []
                     for a in acts:
-                        payload = json.dumps({"content": a + "\n"})
-                        out = "data: " + payload + "\n\n"
-                        self.wfile.write(out.encode('utf-8'))
+                        payload = json.dumps({"type": "action", "content": a})
+                        self.wfile.write(("data: " + payload + "\n\n").encode('utf-8'))
                         self.wfile.flush()
 
             self.wfile.write(b"data: [DONE]\n\n")
@@ -196,9 +220,8 @@ class Handler(BaseHTTPRequestHandler):
             pass
         except Exception as e:
             try:
-                payload = json.dumps({"content": "[Server Error] " + str(e)})
-                out = "data: " + payload + "\n\n"
-                self.wfile.write(out.encode('utf-8'))
+                payload = json.dumps({"type": "error", "content": str(e)})
+                self.wfile.write(("data: " + payload + "\n\n").encode('utf-8'))
                 self.wfile.write(b"data: [DONE]\n\n")
                 self.wfile.flush()
             except Exception:
