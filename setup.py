@@ -14,10 +14,11 @@ import tempfile
 import zipfile
 import urllib.request
 import subprocess
+import shutil
 from pathlib import Path
 
-# Changed to visible directory for easier access on Termux/Linux/Windows
 WORKSPACE_DIR = Path.home() / "synapse"
+OLD_WORKSPACE_DIR = Path.home() / ".synapse"
 CONFIG_PATH = WORKSPACE_DIR / "config.json"
 DNA_PATH = WORKSPACE_DIR / "dna.json"
 EVOLUTION_PATH = WORKSPACE_DIR / "evolution.json"
@@ -69,6 +70,15 @@ def do_update():
             else: print(f"\\033[31m[!] Install failed: {result.stderr.strip()}\\033[0m"); return False
     except Exception as e: print(f"\\033[31m[!] Update error: {e}\\033[0m"); return False
 
+def migrate_data():
+    if OLD_WORKSPACE_DIR.exists() and not WORKSPACE_DIR.exists():
+        print("\\033[33m[*] Migrating data from ~/.synapse to ~/synapse...\\033[0m")
+        try:
+            shutil.copytree(OLD_WORKSPACE_DIR, WORKSPACE_DIR)
+            print("\\033[32m[✓] Migration complete. Your settings, memories, and workspaces are preserved.\\033[0m")
+        except Exception as e:
+            print(f"\\033[31m[!] Migration warning: {e}\\033[0m")
+
 def init_workspace():
     WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
     WS_DIR.mkdir(parents=True, exist_ok=True)
@@ -81,6 +91,7 @@ def init_workspace():
 
 def run():
     if "--update" in sys.argv: do_update(); sys.exit(0)
+    migrate_data()
     init_workspace()
     cfg = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
     providers = cfg.get("providers", {})
@@ -304,7 +315,7 @@ class TerminalChat:
     def _render(self, reason, content, complete=False, status=""):
         self._clear()
         print(BANNER)
-        print(f"\\033[0;37m  v1.2.2 | DNA / Evolution / Workspace\\033[0m")
+        print(f"\\033[0;37m  v1.2.3 | DNA / Evolution / Workspace\\033[0m")
         pfx = "" if self.tokens_exact else "~"
         print(f"\\033[1;37m{'='*62}\\033[0m")
         print(f"\\033[36m[Context] Sys:{pfx}{self.ctx_sys} Hist:{pfx}{self.ctx_hist} In:{pfx}{self.ctx_in} Out:{pfx}{self.ctx_out}\\033[0m")
@@ -324,7 +335,7 @@ class TerminalChat:
     def run(self):
         self._clear()
         print(BANNER)
-        print(f"\\033[0;37m  v1.2.2 | DNA / Evolution / Workspace\\033[0m")
+        print(f"\\033[0;37m  v1.2.3 | DNA / Evolution / Workspace\\033[0m")
         print(f"Env: {self.platform_name}{' (Termux)' if self.is_termux else ''} | Python {platform.python_version()}")
         print(f"Provider: {self.current_provider.upper()} | Model: {self.model} | WS: {self.active_ws}")
         print("Commands: exit, quit, /memory, /clear, /ws, /evolve, /accept <id>, /reject <id>, /nvidia, /cohere, /openrouter")
@@ -465,7 +476,7 @@ with open(os.path.join(PKG_DIR, "main.py"), "w", encoding="utf-8") as f:
 
 setup(
     name="synapse-ai-cli",
-    version="1.2.2",
+    version="1.2.3",
     description="Synapse AI Terminal Client with DNA/Evolution/Workspace Architecture",
     packages=["synapse"],
     python_requires=">=3.8",
