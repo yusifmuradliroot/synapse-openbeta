@@ -2,7 +2,8 @@ import re
 from synapse.core.workspace import Workspace
 
 MODE_CHAT = "chat"
-MODE_CRACK = "crackagent"
+MODE_CODE = "code"
+MODE_AGENT = "agent"
 
 class AgentController:
     def __init__(self, engine, ws, mem, hist):
@@ -13,28 +14,43 @@ class AgentController:
         self.mode = MODE_CHAT
 
     def set_mode(self, m):
-        if m in (MODE_CHAT, MODE_CRACK):
+        if m in (MODE_CHAT, MODE_CODE, MODE_AGENT):
             self.mode = m
+            self.engine.set_mode_params(m)
             return True
         return False
 
     def build_prompt(self, dna, time_str):
-        p = [f"TIME: {time_str}", "RULES: Direct answers only. No filler. Use markdown. Be concise."]
+        p = [f"TIME: {time_str}"]
         p.append(f"WS: {self.ws.active} | Files: {', '.join(self.ws.list_files()) or 'Empty'}")
         p.append("File ops: <{ws_write(f)}>content<{/ws_write}> ONLY.")
-        p.append("Terminal ops: <{cmd(command)}> to run shell commands. Output will be returned automatically.")
-        p.append("LOOP PROTOCOL (CRITICAL):")
-        p.append("- For large tasks, break work into small steps.")
-        p.append("- Complete ONLY ONE file or ONE action per response.")
-        p.append("- Maximum 80 lines of code per response.")
-        p.append("- After each step, end with <{uncompleted}> to continue.")
-        p.append("- When ALL steps are done, finish WITHOUT <{uncompleted}>.")
+        p.append("Terminal ops: <{cmd(command)}> to run shell commands.")
 
-        if self.mode == MODE_CRACK:
-            p.append("MODE: CRACK AGENT - Full autonomous mode. Use terminal commands, file ops, and loop protocol freely.")
-            p.append("You can run ANY shell command via <{cmd(command)}>. Use it to install packages, run scripts, test code, list files, etc.")
-        else:
-            p.append("MODE: CHAT - Normal conversation. Use loop protocol for multi-step tasks.")
+        if self.mode == MODE_CHAT:
+            p.append("MODE: CHAT")
+            p.append("RULES: Short, direct answers. Max 5 sentences unless asked for more.")
+            p.append("Do NOT generate code unless explicitly asked.")
+            p.append("Be conversational but concise. No filler, no greetings.")
+
+        elif self.mode == MODE_CODE:
+            p.append("MODE: CODE")
+            p.append("RULES: Output ONLY code in markdown code blocks.")
+            p.append("No explanations before or after code unless critical.")
+            p.append("Use <{ws_write(f)}>content<{/ws_write}> to save files.")
+            p.append("Temperature is low. Be precise, deterministic, production-ready.")
+            p.append("Include error handling. Follow best practices.")
+
+        elif self.mode == MODE_AGENT:
+            p.append("MODE: AGENT - Full autonomous execution.")
+            p.append("WORKFLOW:")
+            p.append("1. ANALYZE: Understand the task. Read existing files if needed via <{ws_read(f)}>.")
+            p.append("2. PLAN: Break into steps. State your plan briefly.")
+            p.append("3. EXECUTE: Do ONE step per response. Use <{ws_write}> for files, <{cmd}> for commands.")
+            p.append("4. VERIFY: After writing code, run it with <{cmd}> to check for errors.")
+            p.append("5. FIX: If errors, fix and re-verify.")
+            p.append("6. CONTINUE: End with <{uncompleted}> to proceed to next step.")
+            p.append("7. FINISH: When ALL steps done, finish WITHOUT <{uncompleted}>.")
+            p.append("RULES: Max 80 lines of code per response. One file per step. Always verify.")
 
         ms = self.mem.get_all()
         if ms:
@@ -68,3 +84,12 @@ class AgentController:
 
     def extract_commands(self, content):
         return re.findall(r'<\{cmd\(([^)]+)\)\}>', content)
+
+    def has_actions(self, content):
+        return bool(
+            re.search(r'<\{ws_write\(', content) or
+            re.search(r'<\{cmd\(', content) or
+            re.search(r'<\{ws_read\(', content) or
+            re.search(r'<\{ws_delete\(', content) or
+            '<{ws_list}>' in content
+        )
