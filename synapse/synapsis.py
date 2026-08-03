@@ -140,51 +140,72 @@ class Synapsis:
         if self.sessions.active_id:
             self.sessions.save_code_context(self.sessions.active_id, self.code_context)
 
+    def _save_messages(self, original_input, assistant_content):
+        self.current_session_msgs.append({"role": "user", "content": original_input})
+        self.current_session_msgs.append({"role": "assistant", "content": assistant_content})
+        if self.sessions.active_id:
+            self.sessions.save_messages(self.sessions.active_id, self.current_session_msgs)
+
     def stream_chat(self, user_input):
         original_input = user_input
         current_prompt = user_input
         loop_context = []
         loop_count = 0
+        partial_content = ""
+        completed = False
 
-        while loop_count <= MAX_LOOPS:
-            msgs = self._build_loop_messages(loop_context, current_prompt)
-            full = ""
+        try:
+            while loop_count <= MAX_LOOPS:
+                msgs = self._build_loop_messages(loop_context, current_prompt)
+                full = ""
 
-            for ev, data in self.engine.stream(msgs):
-                if ev == "content":
-                    full += data
-                    yield {"type": "content", "data": data}
-                elif ev == "reasoning":
-                    yield {"type": "reasoning", "data": data}
-                elif ev == "error":
-                    yield {"type": "error", "data": data}
-                    return
+                for ev, data in self.engine.stream(msgs):
+                    if ev == "content":
+                        full += data
+                        partial_content += data
+                        yield {"type": "content", "data": data}
+                    elif ev == "reasoning":
+                        yield {"type": "reasoning", "data": data}
+                    elif ev == "error":
+                        yield {"type": "error", "data": data}
+                        return
 
-            if "<{uncompleted}>" in full:
-                loop_count += 1
-                if loop_count > MAX_LOOPS:
-                    yield {"type": "error", "data": "Max loop limit reached (" + str(MAX_LOOPS) + ")."}
+                if "<{uncompleted}>" in full:
+                    loop_count += 1
+                    if loop_count > MAX_LOOPS:
+                        yield {"type": "error", "data": "Max loop limit reached (" + str(MAX_LOOPS) + ")."}
+                        break
+
+                    clean_resp = full.replace("<{uncompleted}>", "").strip()
+                    self._update_code_context(full)
+                    yield {"type": "loop_status", "data": "Step " + str(loop_count) + "/" + str(MAX_LOOPS) + " done. Continuing..."}
+
+                    loop_context.append({"role": "assistant", "content": clean_resp})
+                    loop_context.append({"role": "user", "content": "<{resume}> Continue with the next step."})
+                    current_prompt = "<{resume}> Continue with the next step."
+                    continue
+                else:
+                    clean, acts = self.agent.process(full)
+                    self._update_code_context(full)
+                    self._save_messages(original_input, clean)
+                    completed = True
+                    if acts:
+                        yield {"type": "actions", "data": acts}
+                    yield {"type": "done", "data": clean}
                     break
 
-                clean_resp = full.replace("<{uncompleted}>", "").strip()
-                self._update_code_context(full)
-                yield {"type": "loop_status", "data": "Step " + str(loop_count) + "/" + str(MAX_LOOPS) + " done. Continuing..."}
+        except GeneratorExit:
+            if not completed and partial_content.strip():
+                clean, _ = self.agent.process(partial_content)
+                self._save_messages(original_input, clean + "\n\n[Response interrupted]")
+                self._update_code_context(partial_content)
+            return
 
-                loop_context.append({"role": "assistant", "content": clean_resp})
-                loop_context.append({"role": "user", "content": "<{resume}> Continue with the next step."})
-                current_prompt = "<{resume}> Continue with the next step."
-                continue
-            else:
-                clean, acts = self.agent.process(full)
-                self._update_code_context(full)
-                self.current_session_msgs.append({"role": "user", "content": original_input})
-                self.current_session_msgs.append({"role": "assistant", "content": clean})
-                if self.sessions.active_id:
-                    self.sessions.save_messages(self.sessions.active_id, self.current_session_msgs)
-                if acts:
-                    yield {"type": "actions", "data": acts}
-                yield {"type": "done", "data": clean}
-                break
+        finally:
+            if not completed and partial_content.strip():
+                clean, _ = self.agent.process(partial_content)
+                self._save_messages(original_input, clean + "\n\n[Response interrupted]")
+                self._update_code_context(partial_content)
 
     def edit_and_resend(self, index, new_text):
         if 0 <= index < len(self.current_session_msgs):
