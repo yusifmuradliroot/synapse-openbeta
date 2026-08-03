@@ -10,6 +10,10 @@ with open(os.path.join(PKG_DIR, "__init__.py"), "w", encoding="utf-8") as f:
 CLI_CODE = '''import os
 import sys
 import json
+import tempfile
+import zipfile
+import urllib.request
+import subprocess
 from pathlib import Path
 
 WORKSPACE_DIR = Path.home() / ".synapse"
@@ -47,6 +51,38 @@ DEFAULT_DNA = {
 
 DEFAULT_EVOLUTION = {"proposals": [], "accepted_rules": []}
 
+def do_update():
+    print("\\033[33m[*] Fetching latest version from GitHub...\\033[0m")
+    zip_url = "https://github.com/yusifmuradliroot/synapse-openbeta/archive/refs/heads/main.zip"
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zip_path = os.path.join(tmpdir, "repo.zip")
+            urllib.request.urlretrieve(zip_url, zip_path)
+            
+            with zipfile.ZipFile(zip_path, 'r') as z:
+                z.extractall(tmpdir)
+                
+            dirs = [d for d in os.listdir(tmpdir) if os.path.isdir(os.path.join(tmpdir, d))]
+            if not dirs:
+                print("\\033[31m[!] Extraction failed.\\033[0m")
+                return False
+            repo_dir = os.path.join(tmpdir, dirs[0])
+            
+            print("\\033[33m[*] Installing update (this may take a moment)...\\033[0m")
+            result = subprocess.run(
+                [sys.executable, "-m", "pip", "install", "--user", "--force-reinstall", "-q", repo_dir],
+                capture_output=True, text=True
+            )
+            if result.returncode == 0:
+                print("\\033[32m[✓] Update successful! Please run 'synapse' again.\\033[0m")
+                return True
+            else:
+                print(f"\\033[31m[!] Install failed: {result.stderr.strip()}\\033[0m")
+                return False
+    except Exception as e:
+        print(f"\\033[31m[!] Update error: {e}\\033[0m")
+        return False
+
 def init_workspace():
     WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
     WS_DIR.mkdir(parents=True, exist_ok=True)
@@ -64,6 +100,10 @@ def init_workspace():
         HISTORY_PATH.write_text(json.dumps({"summary": "", "recent": [], "chat_counter": 0}, indent=2), encoding="utf-8")
 
 def run():
+    if "--update" in sys.argv:
+        do_update()
+        sys.exit(0)
+        
     init_workspace()
     cfg = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
     providers = cfg.get("providers", {})
@@ -288,6 +328,7 @@ class TerminalChat:
     def _render(self, reason, content, complete=False, status=""):
         self._clear()
         print(BANNER)
+        print(f"\\033[0;37m  v1.2.0 | DNA / Evolution / Workspace\\033[0m")
         pfx = "" if self.tokens_exact else "~"
         print(f"\\033[1;37m{'='*62}\\033[0m")
         print(f"\\033[36m[Context] Sys:{pfx}{self.ctx_sys} Hist:{pfx}{self.ctx_hist} In:{pfx}{self.ctx_in} Out:{pfx}{self.ctx_out}\\033[0m")
@@ -307,6 +348,7 @@ class TerminalChat:
     def run(self):
         self._clear()
         print(BANNER)
+        print(f"\\033[0;37m  v1.2.0 | DNA / Evolution / Workspace\\033[0m")
         print(f"Env: {self.platform_name}{' (Termux)' if self.is_termux else ''} | Python {platform.python_version()}")
         print(f"Provider: {self.current_provider.upper()} | Model: {self.model} | WS: {self.active_ws}")
         print("Commands: exit, quit, /memory, /clear, /ws, /evolve, /accept <id>, /reject <id>, /nvidia, /cohere, /openrouter")
@@ -322,7 +364,7 @@ class TerminalChat:
                 if ui.lower()=="/memory":
                     print("\\n[Memories]"); [print(f"{i}. {m}") for i,m in enumerate(self.memories,1)] if self.memories else print("None"); print(); continue
                 if ui.lower()=="/clear":
-                    self.memories,selfhistory_data,self.chat_counter,self.sess_in,self.sess_out=[],{"summary":"","recent":[],"chat_counter":0},0,0,0
+                    self.memories, self.history_data, self.chat_counter, self.sess_in, self.sess_out = [], {"summary":"","recent":[],"chat_counter":0}, 0, 0, 0
                     self._save_json(self.mem_path,self.memories); self._save_json(self.hist_path,self.history_data)
                     self.messages=self._build_context(); print("\\n\\033[32m[✓ Cleared]\\033[0m"); continue
                 if ui.lower().startswith("/ws "):
@@ -371,7 +413,6 @@ class TerminalChat:
                     elif ev=="content": cur_c+=data; self._render(cur_r, cur_c)
                 self.sess_in+=self.ctx_in; self.sess_out+=self.ctx_out
 
-                # Parse tags
                 evo_match = re.search(r'<\\{evolve\\((.*?)\\)\\}>', cur_c, re.DOTALL)
                 ws_read = re.search(r'<\\{ws_read\\(([^)]+)\\)\\}>', cur_c)
                 ws_write = re.search(r'<\\{ws_write\\(([^)]+)\\)\\}>(.*?)<\\{/ws_write\\}>', cur_c, re.DOTALL)
@@ -440,7 +481,7 @@ with open(os.path.join(PKG_DIR, "main.py"), "w", encoding="utf-8") as f:
 
 setup(
     name="synapse-ai-cli",
-    version="1.1.0",
+    version="1.2.0",
     description="Synapse AI Terminal Client with DNA/Evolution/Workspace Architecture",
     packages=["synapse"],
     python_requires=">=3.8",
