@@ -11,11 +11,11 @@ HTML = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <title>Synapse</title>
 <style>
-:root{--bg:#000;--bg2:#0a0a0a;--bg3:#111;--bg4:#1a1a1a;--bg5:#222;--fg:#fff;--fg2:#ccc;--fg3:#888;--fg4:#555;--border:#1a1a1a;--border2:#2a2a2a;--accent:#fff;--accent-dim:rgba(255,255,255,0.06);--blur:blur(24px);--radius:14px;--radius-sm:10px;--shadow:0 8px 32px rgba(0,0,0,0.5);--tr:all 0.25s cubic-bezier(0.4,0,0.2,1)}
+:root{--bg:#000;--bg2:#0a0a0a;--bg3:#111;--bg4:#1a1a1a;--bg5:#222;--fg:#fff;--fg2:#ccc;--fg3:#888;--fg4:#555;--border:#1a1a1a;--border2:#2a2a2a;--accent:#fff;--accent-dim:rgba(255,255,255,0.06);--radius:14px;--radius-sm:10px;--shadow:0 8px 32px rgba(0,0,0,0.5);--tr:all 0.25s cubic-bezier(0.4,0,0.2,1)}
 [data-theme="light"]{--bg:#fff;--bg2:#fafafa;--bg3:#f2f2f2;--bg4:#e9e9e9;--bg5:#ddd;--fg:#000;--fg2:#222;--fg3:#666;--fg4:#aaa;--border:#e5e5e5;--border2:#d0d0d0;--accent:#000;--accent-dim:rgba(0,0,0,0.04);--shadow:0 8px 32px rgba(0,0,0,0.06)}
 *{margin:0;padding:0;box-sizing:border-box}
 body{background:var(--bg);color:var(--fg);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;height:100vh;height:100dvh;display:flex;flex-direction:column;overflow:hidden;transition:background 0.4s,color 0.4s}
-header{padding:10px 20px;border-bottom:1px solid var(--border);background:var(--bg2);backdrop-filter:var(--blur);display:flex;justify-content:space-between;align-items:center;flex-shrink:0;z-index:20}
+header{padding:10px 20px;border-bottom:1px solid var(--border);background:var(--bg2);display:flex;justify-content:space-between;align-items:center;flex-shrink:0;z-index:20}
 h1{font-size:14px;font-weight:700;letter-spacing:3px;text-transform:uppercase}
 .hdr-right{display:flex;gap:8px;align-items:center}
 #status{font-size:11px;color:var(--fg3)}
@@ -37,7 +37,7 @@ h1{font-size:14px;font-weight:700;letter-spacing:3px;text-transform:uppercase}
 .sess-btn{background:none;border:none;color:var(--fg4);cursor:pointer;font-size:11px;padding:2px 4px;border-radius:4px}
 .sess-btn:hover{color:var(--fg)}
 .sess-btn.del:hover{color:#f55}
-#chat-area{flex:1;display:flex;flex-direction:column;overflow:hidden}
+#chat-area{flex:1;display:flex;flex-direction:column;overflow:hidden;max-width:900px;margin:0 auto;width:100%}
 #chat{flex:1;overflow-y:auto;padding:20px 24px;display:flex;flex-direction:column;gap:12px}
 #chat::-webkit-scrollbar{width:3px}
 #chat::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px}
@@ -65,11 +65,11 @@ h1{font-size:14px;font-weight:700;letter-spacing:3px;text-transform:uppercase}
 .code-header{background:var(--bg4);padding:6px 12px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border)}
 .code-lang{font-size:10px;color:var(--fg3);font-weight:600;text-transform:uppercase;letter-spacing:1px}
 .code-actions{display:flex;gap:4px}
-.copy-btn,.preview-btn{background:var(--bg5);border:1px solid var(--border2);color:var(--fg2);padding:2px 10px;border-radius:6px;cursor:pointer;font-size:11px;transition:var(--tr)}
+.copy-btn,.preview-btn{background:var(--bg5);border:1px solid var(--border2);color:var(--fg2);padding:2px 10px;border-radius:6px;cursor:pointer;font-size:11px}
 .copy-btn:hover,.preview-btn:hover{background:var(--border2)}
 .code-content{background:var(--bg);padding:12px;overflow-x:auto;font-family:'SF Mono','Fira Code',monospace;font-size:13px;line-height:1.6;white-space:pre;color:var(--fg2)}
 #mode-bar{padding:6px 24px;border-top:1px solid var(--border);display:flex;gap:6px;align-items:center;background:var(--bg2)}
-.mode-btn{padding:4px 14px;border-radius:20px;border:1px solid var(--border);background:transparent;color:var(--fg3);cursor:pointer;font-size:11px;font-weight:600;transition:var(--tr)}
+.mode-btn{padding:5px 16px;border-radius:20px;border:1px solid var(--border);background:transparent;color:var(--fg3);cursor:pointer;font-size:11px;font-weight:600;transition:var(--tr)}
 .mode-btn:hover{border-color:var(--fg4);color:var(--fg2)}
 .mode-btn.active{background:var(--accent);color:var(--bg);border-color:var(--accent)}
 #mode-label{font-size:10px;color:var(--fg4);margin-right:4px;text-transform:uppercase;letter-spacing:1px}
@@ -87,7 +87,7 @@ h1{font-size:14px;font-weight:700;letter-spacing:3px;text-transform:uppercase}
 .cp-hdr span{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--fg3)}
 .cp-close{background:none;border:none;color:var(--fg3);cursor:pointer;font-size:16px}
 #code-file-list{padding:6px;border-bottom:1px solid var(--border);max-height:120px;overflow-y:auto}
-.code-file-item{padding:6px 10px;border-radius:6px;cursor:pointer;font-size:12px;color:var(--fg2);transition:var(--tr)}
+.code-file-item{padding:6px 10px;border-radius:6px;cursor:pointer;font-size:12px;color:var(--fg2)}
 .code-file-item:hover{background:var(--bg4)}
 .code-file-item.active{background:var(--bg4);color:var(--fg)}
 #code-viewer{flex:1;overflow:auto;padding:12px}
@@ -123,6 +123,7 @@ h1{font-size:14px;font-weight:700;letter-spacing:3px;text-transform:uppercase}
   #chat{padding:12px}
   #input-area{padding:10px 12px}
   #code-panel.open{position:absolute;right:0;top:0;height:100%;width:90%;z-index:20}
+  #chat-area{max-width:100%}
 }
 </style>
 </head>
@@ -147,10 +148,11 @@ h1{font-size:14px;font-weight:700;letter-spacing:3px;text-transform:uppercase}
     <div id="mode-bar">
       <span id="mode-label">Mode</span>
       <button class="mode-btn active" data-mode="chat">Chat</button>
-      <button class="mode-btn" data-mode="crackagent">Crack Agent</button>
+      <button class="mode-btn" data-mode="code">Code</button>
+      <button class="mode-btn" data-mode="agent">Agent</button>
     </div>
     <div id="input-area">
-      <input id="inp" type="text" placeholder="Message..." autocomplete="off">
+      <input id="inp" type="text" placeholder="Sohbet et..." autocomplete="off">
       <button id="send" type="button">Send</button>
       <button id="stop" type="button">Stop</button>
     </div>
@@ -158,7 +160,7 @@ h1{font-size:14px;font-weight:700;letter-spacing:3px;text-transform:uppercase}
   <div id="code-panel">
     <div class="cp-hdr"><span>Code Files</span><button class="cp-close" id="cp-close">✕</button></div>
     <div id="code-file-list"></div>
-    <div id="code-viewer"><pre>Click a file to view its content.</pre></div>
+    <div id="code-viewer"><pre>Click a file to view.</pre></div>
     <iframe id="preview-frame" sandbox="allow-scripts"></iframe>
   </div>
 </div>
@@ -193,6 +195,7 @@ var settingsModal=document.getElementById('settings-modal');
 var codePanel=document.getElementById('code-panel'),codeFileList=document.getElementById('code-file-list'),codeViewer=document.getElementById('code-viewer'),previewFrame=document.getElementById('preview-frame');
 var modeBtns=document.querySelectorAll('.mode-btn');
 var busy=false,editIndex=-1,msgCount=0,renderQueue=0,currentSessionId=null,bgControllers={};
+var PLACEHOLDERS={chat:'Sohbet et...',code:'Kod yaz...',agent:'Görev ver...'};
 
 function setTheme(t){document.documentElement.setAttribute('data-theme',t);localStorage.setItem('synapse-theme',t);document.getElementById('theme-dark').classList.toggle('active',t==='dark');document.getElementById('theme-light').classList.toggle('active',t==='light');}
 (function(){var t=localStorage.getItem('synapse-theme')||'dark';setTheme(t);})();
@@ -257,7 +260,6 @@ function addMsg(role,text,idx){
     d.textContent=text||'';
     if(idx>=0){var acts=document.createElement('div');acts.className='msg-actions';var eb=document.createElement('button');eb.className='edit-btn';eb.textContent='Edit';eb.onclick=function(){startEdit(idx,text)};acts.appendChild(eb);d.appendChild(acts);}
   }else if(role==='ai'){d._rawText=text||'';buildAiContent(d,d._rawText);}
-  else if(role==='cmd-result'){d.textContent=text||'';}
   else{d.textContent=text||'';}
   chat.appendChild(d);chat.scrollTop=chat.scrollHeight;msgCount++;return d;
 }
@@ -265,7 +267,16 @@ function appendToMsg(el,text){el._rawText=(el._rawText||'')+text;if(++renderQueu
 function setBusy(v){busy=v;btn.disabled=v;btn.style.display=v?'none':'block';stopBtn.style.display=v?'block':'none';st.textContent=v?'Generating...':'Ready';}
 function startEdit(idx,text){editIndex=idx;inp.value=text;editInd.style.display='flex';inp.focus();}
 cancelEditBtn.onclick=function(){editIndex=-1;inp.value='';editInd.style.display='none';};
-modeBtns.forEach(function(b){b.onclick=function(){modeBtns.forEach(function(x){x.classList.remove('active');});b.classList.add('active');fetch('/api/mode',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:b.getAttribute('data-mode')})});};});
+
+modeBtns.forEach(function(b){
+  b.onclick=function(){
+    modeBtns.forEach(function(x){x.classList.remove('active');});
+    b.classList.add('active');
+    var mode=b.getAttribute('data-mode');
+    inp.placeholder=PLACEHOLDERS[mode]||'Message...';
+    fetch('/api/mode',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:mode})});
+  };
+});
 
 function sendMsg(){
   var t=inp.value.trim();if(!t||busy)return;
@@ -343,7 +354,10 @@ document.getElementById('settings-close').onclick=function(){settingsModal.class
 document.getElementById('settings-save').onclick=function(){
   fetch('/api/settings/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({system_prompt:document.getElementById('sys-prompt').value})}).then(function(){settingsModal.classList.remove('show');});
 };
-function updateModeUI(mode){modeBtns.forEach(function(b){b.classList.toggle('active',b.getAttribute('data-mode')===mode);});}
+function updateModeUI(mode){
+  modeBtns.forEach(function(b){b.classList.toggle('active',b.getAttribute('data-mode')===mode);});
+  inp.placeholder=PLACEHOLDERS[mode]||'Message...';
+}
 function loadProviders(provData,defaultProv){
   var sel=document.getElementById('prov-select');sel.innerHTML='';
   Object.keys(provData).forEach(function(n){var o=document.createElement('option');o.value=n;o.textContent=n.toUpperCase();sel.appendChild(o);});
